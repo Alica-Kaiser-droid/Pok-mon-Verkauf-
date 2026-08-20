@@ -121,25 +121,40 @@ function findName(topText,fullText){
   return out[0]||"";
 }
 async function tcgSearch(name,number){
-  if(!name)return [];
   try{
+    if(number){
+      const parts=number.split("/");
+      const local=parts[0].replace(/^0+/,"")||"0";
+      const total=parts[1]||"";
+      const res=await fetch("https://api.tcgdex.net/v2/de/cards?localId="+encodeURIComponent(local));
+      if(res.ok){
+        const briefs=await res.json();
+        if(Array.isArray(briefs)){
+          const detailed=[];
+          for(const b of briefs.slice(0,40)){
+            try{
+              const d=await fetch("https://api.tcgdex.net/v2/de/cards/"+encodeURIComponent(b.id));
+              if(!d.ok)continue;
+              const card=await d.json();
+              if(String(card.localId).replace(/^0+/,"")===local &&
+                 (!total || String(card.set?.cardCount?.total||"")===total)) detailed.push(card);
+            }catch(e){}
+          }
+          if(detailed.length)return detailed;
+        }
+      }
+    }
+    if(!name)return [];
     const res=await fetch("https://api.tcgdex.net/v2/de/cards?name="+encodeURIComponent(name));
     if(!res.ok)return [];
-    const arr=await res.json();if(!Array.isArray(arr))return [];
-    if(!number)return arr.slice(0,12);
-    const a=number.split("/")[0].replace(/^0+/,"");
-    return arr.sort((x,y)=>{
-      const xa=String(x.localId||"").replace(/^0+/,"")==a?0:1;
-      const ya=String(y.localId||"").replace(/^0+/,"")==a?0:1;
-      return xa-ya;
-    }).slice(0,12);
+    const arr=await res.json();return Array.isArray(arr)?arr.slice(0,12):[];
   }catch(e){return []}
 }
 function render(){
   $("results").innerHTML=state.rows.map((r,i)=>{
     const title="Pokémon "+[r.name,r.number,r.set,r.language].filter(Boolean).join(" ");
     return `<div class="item">
-      <div class="row"><img class="preview" src="${r.url}"><div><h3>Karte ${i+1}</h3><span class="badge ${r.match?"ok":"warn"}">${r.match?"Treffer":"Prüfen"}</span><div class="small">Name-OCR: ${esc(r.ocrName||"–")} · Nummer-OCR: ${esc(r.ocrNumber||"–")}</div></div></div>
+      <div class="row"><img class="preview" src="${r.url}"><div><h3>Karte ${i+1}</h3><span class="badge ${r.match?"ok":"warn"}">${r.match?"Nummer + Set bestätigt":"Prüfen"}</span><div class="small">Name-OCR: ${esc(r.ocrName||"–")} · Nummer-OCR: ${esc(r.ocrNumber||"–")}</div></div></div>
       <label><span>Name</span><input data-i="${i}" data-k="name" value="${esc(r.name)}"></label>
       <label><span>Set</span><input data-i="${i}" data-k="set" value="${esc(r.set)}"></label>
       <div class="grid">
@@ -183,7 +198,7 @@ async function analyze(){
     }catch(e){}
     const name=findName(top,full),number=findNumber(bottom+"\\n"+full);
     const cand=await tcgSearch(name,number),best=cand[0];
-    const exact=best&&number&&String(best.localId).replace(/^0+/,"")==number.split("/")[0].replace(/^0+/,"");
+    const exact=best&&number&&String(best.localId).replace(/^0+/,"")==number.split("/")[0].replace(/^0+/,"") && (!number.split("/")[1] || String(best.set?.cardCount?.total||"")==number.split("/")[1]);
     const set=best?.set?.name||"";
     const cardNumber=best?.localId?best.localId+"/"+(best.set?.cardCount?.total||number.split("/")[1]||""):number;
     const finalName=best?.name||name;
