@@ -4,61 +4,51 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Pokémon → eBay Scanner V1</title>
+<title>Pokémon → eBay Scanner V1.1</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f5f7fb}
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
 h1{font-size:24px;margin:0 0 6px}.sub{color:#667085;font-size:14px;margin-bottom:18px}
 .card{background:#fff;border:1px solid #e4e7ec;border-radius:16px;padding:14px;margin:12px 0}
-button,input,select,textarea{font:inherit}button{border:0;border-radius:12px;padding:11px 14px;background:#111827;color:white;font-weight:600}
+button,input,select{font:inherit}button{border:0;border-radius:12px;padding:11px 14px;background:#111827;color:#fff;font-weight:600}
 button.secondary{background:#eef2f6;color:#111827}button:disabled{opacity:.5}
-input,select,textarea{width:100%;border:1px solid #d0d5dd;border-radius:10px;padding:10px;background:#fff}
+input,select{width:100%;border:1px solid #d0d5dd;border-radius:10px;padding:10px;background:#fff}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.stat{background:#fff;border:1px solid #e4e7ec;border-radius:14px;padding:12px}.stat b{display:block;font-size:22px}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>*{flex:1}.small{font-size:13px;color:#667085}.status{margin-top:8px;font-size:13px}
 .item{border:1px solid #e4e7ec;border-radius:14px;padding:12px;margin-top:10px;background:#fff}.item h3{font-size:16px;margin:0 0 4px}
 .badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2f6;font-size:12px;margin:4px 4px 4px 0}.ok{background:#e8f7ee}.warn{background:#fff4df}
 .preview{width:90px;height:120px;object-fit:cover;border-radius:8px;background:#eee}.hidden{display:none}
 label{display:block;font-size:13px;font-weight:600;margin-top:8px}label span{display:block;margin-bottom:5px}
+details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f8fa;border-radius:8px;padding:8px}
 @media(max-width:520px){.grid{grid-template-columns:1fr}.row{display:grid;grid-template-columns:1fr 1fr}.row button{width:100%}}
 </style>
 </head>
 <body>
 <div class="wrap">
 <h1>Pokémon → eBay Scanner</h1>
-<div class="sub">V1: iPhone-Fotos → OCR → TCGdex-Abgleich → CSV. Keine kostenpflichtige Karten-API.</div>
-
+<div class="sub">V1.1: mehrere OCR-Pässe, gezielte Namens-/Nummernerkennung und TCGdex-Abgleich.</div>
 <div class="grid">
-  <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
-  <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
+<div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
+<div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
 </div>
 
 <div class="card">
-  <div class="row">
-    <label style="flex:1"><span>Karten fotografieren</span>
-      <input id="camera" type="file" accept="image/*" capture="environment" multiple>
-    </label>
-    <label style="flex:1"><span>Fotos auswählen</span>
-      <input id="files" type="file" accept="image/*" multiple>
-    </label>
-  </div>
-  <div class="status" id="status">Noch keine Fotos.</div>
-  <div class="row" style="margin-top:10px">
-    <button id="analyze" disabled>Fotos analysieren</button>
-    <button id="clear" class="secondary">Leeren</button>
-  </div>
+<label><span>Fotos aufnehmen</span><input id="camera" type="file" accept="image/*" capture="environment" multiple></label>
+<label><span>Fotos auswählen</span><input id="files" type="file" accept="image/*" multiple></label>
+<div class="status" id="status">Noch keine Fotos.</div>
+<div class="row" style="margin-top:10px">
+<button id="analyze" disabled>Fotos analysieren</button>
+<button id="clear" class="secondary">Leeren</button>
+</div>
 </div>
 
 <div class="card">
-  <div class="row">
-    <button id="csv" class="secondary">CSV erzeugen</button>
-    <button id="copy" class="secondary">CSV in Zwischenablage</button>
-  </div>
-  <div class="small" style="margin-top:8px">
-    Die CSV ist zunächst eine saubere Arbeitsdatei für den späteren eBay-Import.
-    eBay-Seller-Hub-Feeds verwenden ein festes Template; dieses binden wir nach dem ersten Erkennungstest exakt an.
-  </div>
+<div class="row">
+<button id="csv" class="secondary">CSV erzeugen</button>
+<button id="copy" class="secondary">CSV kopieren</button>
 </div>
-
+<div class="small" style="margin-top:8px">Die CSV bleibt eine Arbeitsdatei, bis wir sie an dein echtes eBay-Template angepasst haben.</div>
+</div>
 <div id="results"></div>
 </div>
 
@@ -66,126 +56,147 @@ label{display:block;font-size:13px;font-weight:600;margin-top:8px}label span{dis
 <script>
 const state={files:[],rows:[]};
 const $=id=>document.getElementById(id);
-function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function update(){ $("nPhotos").textContent=state.files.length; $("nFound").textContent=state.rows.filter(x=>x.match).length; $("analyze").disabled=!state.files.length; }
-function addFiles(fs){state.files.push(...Array.from(fs)); state.files=state.files.slice(0,50); $("status").textContent=state.files.length+" Fotos bereit."; update();}
-$("camera").addEventListener("change",e=>addFiles(e.target.files));
-$("files").addEventListener("change",e=>addFiles(e.target.files));
-$("clear").addEventListener("click",()=>{state.files=[];state.rows=[];$("results").innerHTML="";$("status").textContent="Geleert.";update();});
+function addFiles(fs){state.files.push(...Array.from(fs));state.files=state.files.slice(0,50);$("status").textContent=state.files.length+" Fotos bereit.";update();}
+$("camera").onchange=e=>addFiles(e.target.files);$("files").onchange=e=>addFiles(e.target.files);
+$("clear").onclick=()=>{state.files=[];state.rows=[];$("results").innerHTML="";$("status").textContent="Geleert.";update();};
 
-function parseNumber(t){
-  const clean=t.replace(/\s+/g," ");
-  const m=clean.match(/(?:^|\s)(\d{1,4})\s*[\/|]\s*(\d{1,4})(?:\s|$)/i);
-  return m?m[1]+"/"+m[2]:"";
+function preprocess(file, kind){
+  return new Promise((resolve,reject)=>{
+    const im=new Image();
+    im.onload=()=>{
+      const c=document.createElement("canvas"),ctx=c.getContext("2d");
+      const W=1800, ratio=im.height/im.width, H=Math.round(W*ratio);
+      c.width=W;c.height=H;
+      ctx.drawImage(im,0,0,W,H);
+      const crop=(y0,y1)=>{
+        const cc=document.createElement("canvas"),cw=W,ch=Math.max(1,Math.round(H*(y1-y0)));
+        cc.width=cw;cc.height=ch;const xctx=cc.getContext("2d");
+        xctx.drawImage(c,0,Math.round(H*y0),W,ch,0,0,W,ch);
+        const d=xctx.getImageData(0,0,cw,ch),p=d.data;
+        for(let i=0;i<p.length;i+=4){
+          let v=.299*p[i]+.587*p[i+1]+.114*p[i+2];
+          v=(v-128)*1.45+128;
+          v=Math.max(0,Math.min(255,v));
+          p[i]=p[i+1]=p[i+2]=v;
+        }
+        xctx.putImageData(d,0,0);
+        return cc;
+      };
+      if(kind==="top") resolve(crop(0,.22));
+      else if(kind==="bottom") resolve(crop(.82,1));
+      else resolve(c);
+    };
+    im.onerror=reject;im.src=URL.createObjectURL(file);
+  });
 }
-function guessName(t){
-  const lines=t.split(/\n+/).map(x=>x.trim()).filter(Boolean);
-  const bad=/^(pokemon|pokémon|basis|phase|trainer|item|supporter|energy|hp|kp|illus|illustrator|schwäche|resistenz|rückzug|weakness|resistance|retreat)$/i;
-  for(const line of lines.slice(0,12)){
-    const s=line.replace(/[^A-Za-zÀ-ÿ\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF .'-]/g," ").replace(/\s+/g," ").trim();
-    if(s.length>=3 && s.length<=35 && !bad.test(s) && !/\d/.test(s)) return s;
-  }
+
+async function ocrPass(worker, source, psm){
+  await worker.setParameters({tessedit_pageseg_mode:String(psm),preserve_interword_spaces:"1"});
+  const out=await worker.recognize(source);
+  return out.data.text||"";
+}
+
+function cleanLines(t){return t.split(/\n+/).map(x=>x.replace(/[|]/g," ").replace(/\s+/g," ").trim()).filter(Boolean);}
+function findNumber(text){
+  const s=text.replace(/\n/g," ").replace(/O/gi,"0");
+  const patterns=[/(?:^|\s)(\d{1,3})\s*[\/|]\s*(\d{1,3})(?:\s|$)/,/(?:^|\s)(\d{1,3})\s*[-–]\s*(\d{1,3})(?:\s|$)/];
+  for(const re of patterns){const m=s.match(re);if(m)return `${m[1]}/${m[2]}`;}
   return "";
 }
-function csvEscape(v){v=String(v??"");return '"'+v.replace(/"/g,'""')+'"';}
-function makeCSV(){
-  const header=["SKU","Action","Title","Description","Category","Condition","Price","Quantity","Language","Set","Card Number","Variant","Picture Filename"];
-  const lines=[header.map(csvEscape).join(",")];
-  for(const r of state.rows){
-    const title=r.title||"Pokémon "+[r.name,r.number,r.set,r.language].filter(Boolean).join(" ");
-    lines.push([r.sku,"Add",title,
-      `Pokémon Karte ${r.name||""} ${r.number||""}. Set: ${r.set||""}. Sprache: ${r.language||""}. Zustand: ${r.condition||"Bitte prüfen"}.`,
-      "Sammelkartenspiele:Pokémon TCG",r.condition||"",r.price||"",1,r.language||"",r.set||"",r.number||"",r.variant||"",r.file.name].map(csvEscape).join(","));
+const bad=/^(basis|phase|phase 1|phase 2|trainer|item|supporter|energie|energy|hp|kp|nr|illus|illustr|schwäche|resistenz|rückzug|weakness|resistance|retreat|pokemon|pokémon)$/i;
+function findName(topText,fullText){
+  const candidates=[...cleanLines(topText),...cleanLines(fullText)];
+  const out=[];
+  for(const line of candidates){
+    let s=line.replace(/^[^A-Za-zÀ-ÿ\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF]+/,"").replace(/[^A-Za-zÀ-ÿ\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF .'-]/g," ").replace(/\s+/g," ").trim();
+    if(!s||s.length<3||s.length>30||bad.test(s)||/\d/.test(s))continue;
+    if(/^(BASIS|PHASE|TRAINER)/i.test(s))continue;
+    // Favor short title-like lines near the top.
+    out.push(s);
   }
-  return lines.join("\r\n");
+  // Prefer a line containing common Pokémon-name capitalization and avoid long OCR phrases.
+  out.sort((a,b)=>a.length-b.length);
+  return out[0]||"";
 }
-$("csv").addEventListener("click",()=>{
-  if(!state.rows.length){alert("Bitte zuerst Karten analysieren.");return;}
-  const blob=new Blob(["\uFEFF"+makeCSV()],{type:"text/csv;charset=utf-8"});
-  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="pokemon-ebay-listings.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
-});
-$("copy").addEventListener("click",async()=>{
-  if(!state.rows.length){alert("Bitte zuerst Karten analysieren.");return;}
-  await navigator.clipboard.writeText(makeCSV());$("status").textContent="CSV in die Zwischenablage kopiert.";
-});
-
 async function tcgSearch(name,number){
   if(!name)return [];
-  const url="https://api.tcgdex.net/v2/de/cards?name="+encodeURIComponent(name);
   try{
-    const res=await fetch(url); if(!res.ok)return [];
-    const data=await res.json(); const arr=Array.isArray(data)?data:[];
-    if(!number)return arr.slice(0,10);
-    const [a,b]=number.split("/");
+    const res=await fetch("https://api.tcgdex.net/v2/de/cards?name="+encodeURIComponent(name));
+    if(!res.ok)return [];
+    const arr=await res.json();if(!Array.isArray(arr))return [];
+    if(!number)return arr.slice(0,12);
+    const a=number.split("/")[0].replace(/^0+/,"");
     return arr.sort((x,y)=>{
-      const xa=String(x.localId||"").replace(/^0+/,"")==String(a).replace(/^0+/,"")?0:1;
-      const ya=String(y.localId||"").replace(/^0+/,"")==String(a).replace(/^0+/,"")?0:1;
+      const xa=String(x.localId||"").replace(/^0+/,"")==a?0:1;
+      const ya=String(y.localId||"").replace(/^0+/,"")==a?0:1;
       return xa-ya;
-    }).slice(0,10);
+    }).slice(0,12);
   }catch(e){return []}
 }
 function render(){
-  $("results").innerHTML=state.rows.map((r,i)=>`
-  <div class="item">
-    <div class="row">
-      <img class="preview" src="${r.url}" alt="Kartenfoto">
-      <div style="flex:2">
-        <h3>Karte ${i+1}</h3>
-        <span class="badge ${r.match?"ok":"warn"}">${r.match?"TCGdex-Treffer":"Prüfen"}</span>
-        <div class="small">OCR: ${esc(r.ocrNumber||"keine Kartennummer")} · ${esc(r.ocrName||"kein Name")}</div>
+  $("results").innerHTML=state.rows.map((r,i)=>{
+    const title="Pokémon "+[r.name,r.number,r.set,r.language].filter(Boolean).join(" ");
+    return `<div class="item">
+      <div class="row"><img class="preview" src="${r.url}"><div><h3>Karte ${i+1}</h3><span class="badge ${r.match?"ok":"warn"}">${r.match?"Treffer":"Prüfen"}</span><div class="small">Name-OCR: ${esc(r.ocrName||"–")} · Nummer-OCR: ${esc(r.ocrNumber||"–")}</div></div></div>
+      <label><span>Name</span><input data-i="${i}" data-k="name" value="${esc(r.name)}"></label>
+      <label><span>Set</span><input data-i="${i}" data-k="set" value="${esc(r.set)}"></label>
+      <div class="grid">
+        <label><span>Kartennummer</span><input data-i="${i}" data-k="number" value="${esc(r.number)}"></label>
+        <label><span>Sprache</span><select data-i="${i}" data-k="language">${["Deutsch","Englisch","Japanisch","Chinesisch","Französisch","Italienisch","Spanisch","Unbekannt"].map(x=>`<option ${x==r.language?"selected":""}>${x}</option>`).join("")}</select></label>
       </div>
-    </div>
-    <label><span>Name</span><input data-i="${i}" data-k="name" value="${esc(r.name)}"></label>
-    <label><span>Set</span><input data-i="${i}" data-k="set" value="${esc(r.set)}"></label>
-    <div class="grid">
-      <label><span>Kartennummer</span><input data-i="${i}" data-k="number" value="${esc(r.number)}"></label>
-      <label><span>Sprache</span><select data-i="${i}" data-k="language">
-        ${["Deutsch","Englisch","Japanisch","Chinesisch","Französisch","Italienisch","Spanisch","Unbekannt"].map(x=>`<option ${x==r.language?"selected":""}>${x}</option>`).join("")}
-      </select></label>
-    </div>
-    <div class="grid">
-      <label><span>Zustand</span><select data-i="${i}" data-k="condition">
-        ${["","Near Mint","Excellent","Good","Played","Damaged"].map(x=>`<option value="${esc(x)}" ${x==r.condition?"selected":""}>${x||"Bitte wählen"}</option>`).join("")}
-      </select></label>
-      <label><span>Variante</span><select data-i="${i}" data-k="variant">
-        ${["","Normal","Holo","Reverse Holo","Promo","Unsicher"].map(x=>`<option value="${esc(x)}" ${x==r.variant?"selected":""}>${x||"Bitte wählen"}</option>`).join("")}
-      </select></label>
-    </div>
-    <label><span>eBay-Titel</span><input data-i="${i}" data-k="title" value="${esc(r.title)}"></label>
-    <label><span>Preis (€)</span><input data-i="${i}" data-k="price" type="number" step="0.01" value="${esc(r.price)}"></label>
-  </div>`).join("");
-  $("results").querySelectorAll("[data-i]").forEach(el=>el.addEventListener("input",e=>{
-    const r=state.rows[+e.target.dataset.i]; r[e.target.dataset.k]=e.target.value;
-    if(e.target.dataset.k==="name"||e.target.dataset.k==="number"||e.target.dataset.k==="set"||e.target.dataset.k==="language")
-      r.title="Pokémon "+[r.name,r.number,r.set,r.language].filter(Boolean).join(" ");
-  }));
+      <div class="grid">
+        <label><span>Zustand</span><select data-i="${i}" data-k="condition">${["","Near Mint","Excellent","Good","Played","Damaged"].map(x=>`<option value="${esc(x)}" ${x==r.condition?"selected":""}>${x||"Bitte wählen"}</option>`).join("")}</select></label>
+        <label><span>Variante</span><select data-i="${i}" data-k="variant">${["","Normal","Holo","Reverse Holo","Promo","Unsicher"].map(x=>`<option value="${esc(x)}" ${x==r.variant?"selected":""}>${x||"Bitte wählen"}</option>`).join("")}</select></label>
+      </div>
+      <label><span>eBay-Titel</span><input data-i="${i}" data-k="title" value="${esc(r.title||title)}"></label>
+      <label><span>Preis (€)</span><input data-i="${i}" data-k="price" type="number" step="0.01" value="${esc(r.price)}"></label>
+      <details><summary>Erkannter OCR-Text</summary><div class="ocr">${esc(r.ocr)}</div></details>
+    </div>`;
+  }).join("");
+  $("results").querySelectorAll("[data-i]").forEach(el=>el.oninput=e=>{
+    const r=state.rows[+e.target.dataset.i];r[e.target.dataset.k]=e.target.value;
+    if(["name","number","set","language"].includes(e.target.dataset.k))r.title="Pokémon "+[r.name,r.number,r.set,r.language].filter(Boolean).join(" ");
+  });
 }
+function csvEscape(v){return '"'+String(v??"").replace(/"/g,'""')+'"'}
+function makeCSV(){
+  const h=["SKU","Action","Title","Description","Category","Condition","Price","Quantity","Language","Set","Card Number","Variant","Picture Filename"];
+  const lines=[h.map(csvEscape).join(",")];
+  for(const r of state.rows)lines.push([r.sku,"Add",r.title||"Pokémon "+[r.name,r.number,r.set,r.language].filter(Boolean).join(" "),`Pokémon Karte ${r.name}. Set: ${r.set}. Sprache: ${r.language}. Zustand: ${r.condition||"Bitte prüfen"}.`,"Sammelkartenspiele:Pokémon TCG",r.condition,r.price,1,r.language,r.set,r.number,r.variant,r.file.name].map(csvEscape).join(","));
+  return lines.join("\r\n");
+}
+$("csv").onclick=()=>{if(!state.rows.length)return alert("Erst analysieren.");const b=new Blob(["\uFEFF"+makeCSV()],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="pokemon-ebay-listings.csv";a.click()};
+$("copy").onclick=async()=>{if(!state.rows.length)return alert("Erst analysieren.");await navigator.clipboard.writeText(makeCSV());$("status").textContent="CSV kopiert.";};
+
 async function analyze(){
-  $("analyze").disabled=true;
-  state.rows=[];
+  $("analyze").disabled=true;state.rows=[];
+  $("status").textContent="OCR-Engine wird geladen …";
   const worker=await Tesseract.createWorker("deu+eng");
   for(let i=0;i<state.files.length;i++){
-    const file=state.files[i]; $("status").textContent=`Analysiere ${i+1}/${state.files.length} …`;
-    let text="";
-    try{const out=await worker.recognize(file);text=out.data.text||"";}catch(e){}
-    const name=guessName(text), number=parseNumber(text);
-    const candidates=await tcgSearch(name,number);
-    const top=candidates[0];
-    const set=top?.set?.name||"";
+    const file=state.files[i];$("status").textContent=`Analysiere ${i+1}/${state.files.length} …`;
+    let top="",bottom="",full="";
+    try{
+      const [a,b,c]=await Promise.all([preprocess(file,"top"),preprocess(file,"bottom"),preprocess(file,"full")]);
+      top=await ocrPass(worker,a,7); bottom=await ocrPass(worker,b,6); full=await ocrPass(worker,c,6);
+    }catch(e){}
+    const name=findName(top,full),number=findNumber(bottom+"\\n"+full);
+    const cand=await tcgSearch(name,number),best=cand[0];
+    const exact=best&&number&&String(best.localId).replace(/^0+/,"")==number.split("/")[0].replace(/^0+/,"");
+    const set=best?.set?.name||"";
+    const cardNumber=best?.localId?best.localId+"/"+(best.set?.cardCount?.total||number.split("/")[1]||""):number;
+    const finalName=best?.name||name;
     const lang="Deutsch";
-    state.rows.push({
-      sku:"PKM-"+Date.now().toString(36).toUpperCase()+"-"+String(i+1).padStart(3,"0"),
-      file,url:URL.createObjectURL(file),ocrName:name,ocrNumber:number,name:top?.name||name,set,
-      number:top?(top.localId+"/"+(top.set?.cardCount?.total||"")):number,language:lang,
-      condition:"",variant:"",price:"",title:"Pokémon "+[top?.name||name,top?.localId?top.localId+"/"+(top.set?.cardCount?.total||""):number,set,lang].filter(Boolean).join(" "),
-      match:!!top
+    state.rows.push({sku:"PKM-"+Date.now().toString(36).toUpperCase()+"-"+String(i+1).padStart(3,"0"),file,url:URL.createObjectURL(file),
+      ocrName:name,ocrNumber:number,ocr:top+"\\n--- BOTTOM ---\\n"+bottom+"\\n--- FULL ---\\n"+full,
+      name:finalName,set,number:cardNumber,language:lang,condition:"",variant:"",price:"",
+      title:"Pokémon "+[finalName,cardNumber,set,lang].filter(Boolean).join(" "),match:!!best&&!!(exact||name)
     });
-    render(); update();
+    render();update();
   }
   await worker.terminate();$("status").textContent=`Fertig: ${state.files.length} Fotos analysiert.`;$("analyze").disabled=false;
 }
-$("analyze").addEventListener("click",analyze);
-update();
+$("analyze").onclick=analyze;update();
 </script>
-</body>
-</html>
+</body></html>
