@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Pokémon → eBay Scanner V2.0</title>
+<title>Pokémon → eBay Scanner V2.1</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f5f7fb}
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
@@ -25,8 +25,8 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 </head>
 <body>
 <div class="wrap">
-<h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V2.0</span></h1>
-<div class="sub">V2.0 · Batch-Scan bis 50 Fotos · Mehrfachauswahl auf dem iPhone · Nummer + Set zuerst</div><div class="small" style="margin-top:4px">Build: 2026-08-21-10 · Bis zu 50 Fotos pro Durchlauf, mit Fortschritt und Einzelprüfung.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen. Bei unsicheren Treffern kannst du Google und eBay direkt aus der Karte öffnen.</div>
+<h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V2.1</span></h1>
+<div class="sub">V2.1 · Robuster Nummern-Scan · Set-Abgleich · Batch bis 50 Fotos</div><div class="small" style="margin-top:4px">Build: 2026-08-21-11 · Bis zu 50 Fotos pro Durchlauf, mit Fortschritt und Einzelprüfung.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen. Bei unsicheren Treffern kannst du Google und eBay direkt aus der Karte öffnen.</div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
@@ -92,7 +92,8 @@ function preprocess(file, kind, variant="normal"){
 
       let y0=0,y1=1,x0=0,x1=1;
       if(kind==="top"){y0=.015;y1=.18;x0=.05;x1=.95;}
-      if(kind==="number"){y0=.86;y1=.995;x0=.02;x1=.78;}
+      if(kind==="number"){y0=.82;y1=.995;x0=.00;x1=.92;}
+      if(kind==="number-left"){y0=.86;y1=.995;x0=.00;x1=.52;}
       if(kind==="full"){y0=0;y1=1;x0=0;x1=1;}
 
       const cw=Math.round(W*(x1-x0)), ch=Math.round(H*(y1-y0));
@@ -104,7 +105,7 @@ function preprocess(file, kind, variant="normal"){
       const d=xctx.getImageData(0,0,cw,ch),p=d.data;
       for(let i=0;i<p.length;i+=4){
         let v=.299*p[i]+.587*p[i+1]+.114*p[i+2];
-        if(variant==="high") v=(v-128)*2.0+128;
+        if(variant==="high") v=(v-128)*2.1+128;
         else if(variant==="soft") v=(v-128)*1.25+128;
         v=Math.max(0,Math.min(255,v));
         p[i]=p[i+1]=p[i+2]=v;
@@ -123,12 +124,34 @@ async function ocrPass(worker, source, psm){
 }
 
 function cleanLines(t){return t.split(/\n+/).map(x=>x.replace(/[|]/g," ").replace(/\s+/g," ").trim()).filter(Boolean);}
+function normalizeNumCandidate(a,b){
+  a=String(a||"").replace(/[^0-9]/g,""); b=String(b||"").replace(/[^0-9]/g,"");
+  if(!a||!b)return "";
+  if(a.length>3)a=a.slice(-3); if(b.length>3)b=b.slice(-3);
+  const n=parseInt(a,10),t=parseInt(b,10);
+  if(!Number.isFinite(n)||!Number.isFinite(t)||n<1||t<1||n>t||t>999)return "";
+  return String(n).padStart(3,"0")+"/"+String(t).padStart(3,"0");
+}
 function findNumber(text){
-  const s=text.replace(/\n/g," ").replace(/O/gi,"0");
-  const patterns=[/(?:^|\s)(\d{1,3})\s*[\/|]\s*(\d{1,3})(?:\s|$)/,/(?:^|\s)(\d{1,3})\s*[-–]\s*(\d{1,3})(?:\s|$)/];
-  for(const re of patterns){const m=s.match(re);if(m)return `${m[1]}/${m[2]}`;}
+  const raw=String(text||"").replace(/O/gi,"0").replace(/[Il|]/g,"1");
+  const compact=raw.replace(/\s+/g," ");
+  const patterns=[
+    /(\d{1,3})\s*[\/|\\]\s*(\d{1,3})/g,
+    /(\d{1,3})\s*[\-–]\s*(\d{1,3})/g,
+    /(^|\s)(\d{1,3})\s+(\d{1,3})(?=\s|$)/g
+  ];
+  for(const re of patterns){ let m; while((m=re.exec(compact))){ const v=normalizeNumCandidate(m[m.length-2],m[m.length-1]); if(v)return v; }}
+  // OCR sometimes reads the slash as punctuation or drops it entirely.
+  const digits=[...compact.matchAll(/\b\d{2,3}\b/g)].map(m=>m[0]);
+  for(let i=0;i<digits.length-1;i++){ const v=normalizeNumCandidate(digits[i],digits[i+1]); if(v)return v; }
   return "";
 }
+function numberCandidates(texts){
+  const out=[];
+  for(const t of texts){ const n=findNumber(t); if(n&&!out.includes(n))out.push(n); }
+  return out;
+}
+
 const bad=/^(basis|phase|phase 1|phase 2|trainer|item|supporter|energie|energy|hp|kp|nr|illus|illustr|schwäche|resistenz|rückzug|weakness|resistance|retreat|pokemon|pokémon)$/i;
 function findName(topText,fullText){
   const candidates=[...cleanLines(topText),...cleanLines(fullText)];
@@ -206,8 +229,9 @@ function buildDescription(r){
   return parts.join(". ")+".";
 }
 function webQuery(r){
-  const bits=[r.number,r.name,r.set].filter(Boolean);
-  if(!bits.length && r.ocrName) bits.push(r.ocrName);
+  // Never send weak OCR names to Google/eBay. Number and confirmed set/name first.
+  const bits=[r.number,r.set,r.name].filter(Boolean);
+  if(!bits.length && r.ocrNumber) bits.push(r.ocrNumber);
   return `Pokemon ${bits.join(" ")}`.trim();
 }
 function googleConfirm(r){
@@ -245,6 +269,24 @@ async function retryTcg(i){
     alert('Kein eindeutiger TCGdex-Treffer. Bitte Google bestätigen.');
   }
 }
+async function retryNumber(i){
+  const r=state.rows[i];
+  const worker=await Tesseract.createWorker("deu+eng");
+  try{
+    const imgs=[];
+    for(const v of ["normal","high","soft"]){ imgs.push(await preprocess(r.file,"number",v)); imgs.push(await preprocess(r.file,"number-left",v)); }
+    const texts=[];
+    for(const img of imgs){ for(const psm of [6,7,11,13]) texts.push(await ocrPass(worker,img,psm)); }
+    const nums=numberCandidates(texts);
+    if(nums.length){
+      r.ocrNumber=nums[0]; r.number=nums[0];
+      const cand=await tcgSearch("",nums[0]); const best=cand[0];
+      if(best){ r.name=best.name||r.name; r.set=best.set?.name||r.set; r.match=true; r.webSource="TCGdex"; }
+      r.title=buildTitle(r); render(); update();
+      alert("Kartennummer erkannt: "+nums[0]+(best?" – Karte + Set bestätigt.":""));
+    }else alert("Kartennummer konnte nicht sicher erkannt werden. Bitte Foto näher/gerader aufnehmen.");
+  }finally{ try{await worker.terminate()}catch(e){} }
+}
 function render(){
   $("results").innerHTML=state.rows.map((r,i)=>{
     const title=buildTitle(r);
@@ -254,6 +296,7 @@ function render(){
         <button type="button" class="secondary" data-web-google="${i}">🔎 Google bestätigen</button>
         <button type="button" class="secondary" data-web-ebay="${i}">🛒 eBay prüfen</button>
         <button type="button" class="secondary" data-web-tcg="${i}">↻ TCGdex erneut</button>
+        <button type="button" class="secondary" data-retry-number="${i}">🔢 Nummer erneut scannen</button>
         <button type="button" class="secondary" data-web-help="${i}">ℹ️ Was prüfen?</button>
       </div>
       <label><span>Name</span><input data-i="${i}" data-k="name" value="${esc(r.name)}"></label>
@@ -275,6 +318,7 @@ function render(){
   $("results").querySelectorAll("[data-web-google]").forEach(el=>el.onclick=()=>googleConfirm(state.rows[+el.dataset.webGoogle]));
   $("results").querySelectorAll("[data-web-ebay]").forEach(el=>el.onclick=()=>ebaySearch(state.rows[+el.dataset.webEbay]));
   $("results").querySelectorAll("[data-web-tcg]").forEach(el=>el.onclick=()=>retryTcg(+el.dataset.webTcg));
+  $("results").querySelectorAll("[data-retry-number]").forEach(el=>el.onclick=()=>retryNumber(+el.dataset.retryNumber));
   $("results").querySelectorAll("[data-web-help]").forEach(el=>el.onclick=()=>alert("Prüfe bei Google vor allem: Kartennummer, Kartenname und Set. Bei eBay kannst du danach nach ähnlichen Angeboten suchen und die übliche Titel-Reihenfolge übernehmen. Die App übernimmt Web-Ergebnisse nicht blind, damit falsche Karten nicht automatisch gelistet werden."));
   $("results").querySelectorAll("[data-i]").forEach(el=>el.oninput=e=>{
     const r=state.rows[+e.target.dataset.i];
@@ -318,13 +362,13 @@ async function analyze(){
         const n1=await preprocess(file,"number","normal");
         const n2=await preprocess(file,"number","high");
         const n3=await preprocess(file,"number","soft");
+        const nl=await preprocess(file,"number-left","high");
         const fullImg=await preprocess(file,"full","normal");
         top=await ocrPass(worker,topImg,7);
-        const a=await ocrPass(worker,n1,6);
-        const b=await ocrPass(worker,n2,7);
-        const c=await ocrPass(worker,n3,6);
+        const texts=[];
+        for(const img of [n1,n2,n3,nl]) for(const psm of [6,7,11,13]) texts.push(await ocrPass(worker,img,psm));
         full=await ocrPass(worker,fullImg,6);
-        numberText=[a,b,c,full].join("\n");
+        numberText=texts.join("\n")+"\n"+full;
       }catch(e){numberText="";}
       const name=findName(top,full);
       const number=findNumber(numberText);
@@ -355,7 +399,7 @@ $("analyze").onclick=analyze;update();
 <script>
 /* V1.5 safety layer: never silently trust a weak OCR number/name combination. */
 window.POKEMON_SCANNER_V18 = {
-  version: "2.0",
+  version: "2.1",
   build: "2026-08-21-10",
   normalizeNumber: function(v) {
     if (!v) return "";
