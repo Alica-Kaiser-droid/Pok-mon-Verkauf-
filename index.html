@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Pokémon → eBay Scanner V2.1</title>
+<title>Pokémon → eBay Scanner V2.2</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f5f7fb}
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
@@ -26,7 +26,7 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 <body>
 <div class="wrap">
 <h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V2.1</span></h1>
-<div class="sub">V2.1 · Robuster Nummern-Scan · Set-Abgleich · Batch bis 50 Fotos</div><div class="small" style="margin-top:4px">Build: 2026-08-21-11 · Bis zu 50 Fotos pro Durchlauf, mit Fortschritt und Einzelprüfung.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen. Bei unsicheren Treffern kannst du Google und eBay direkt aus der Karte öffnen.</div>
+<div class="sub">V2.2 · Gezielter Kartenname-Scan · Nummer + Set-Abgleich · Batch bis 50 Fotos</div><div class="small" style="margin-top:4px">Build: 2026-08-21-09 · Kartenname wird gezielt rechts neben BASIS/PHASE gescannt · Bis zu 50 Fotos pro Durchlauf, mit Fortschritt und Einzelprüfung.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen. Bei unsicheren Treffern kannst du Google und eBay direkt aus der Karte öffnen.</div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
@@ -94,6 +94,8 @@ function preprocess(file, kind, variant="normal"){
       if(kind==="top"){y0=.015;y1=.18;x0=.05;x1=.95;}
       if(kind==="number"){y0=.82;y1=.995;x0=.00;x1=.92;}
       if(kind==="number-left"){y0=.86;y1=.995;x0=.00;x1=.52;}
+      if(kind==="name"){y0=.00;y1=.105;x0=.22;x1=.82;}
+      if(kind==="name-wide"){y0=.00;y1=.145;x0=.18;x1=.88;}
       if(kind==="full"){y0=0;y1=1;x0=0;x1=1;}
 
       const cw=Math.round(W*(x1-x0)), ch=Math.round(H*(y1-y0));
@@ -153,19 +155,38 @@ function numberCandidates(texts){
 }
 
 const bad=/^(basis|phase|phase 1|phase 2|trainer|item|supporter|energie|energy|hp|kp|nr|illus|illustr|schwäche|resistenz|rückzug|weakness|resistance|retreat|pokemon|pokémon)$/i;
-function findName(topText,fullText){
-  const candidates=[...cleanLines(topText),...cleanLines(fullText)];
-  const out=[];
-  for(const line of candidates){
-    let s=line.replace(/^[^A-Za-zÀ-ÿ\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF]+/,"").replace(/[^A-Za-zÀ-ÿ\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF .'-]/g," ").replace(/\s+/g," ").trim();
-    if(!s||s.length<3||s.length>30||bad.test(s)||/\d/.test(s))continue;
+function findName(nameTexts,topText,fullText){
+  // The Pokémon name is printed in a very predictable place: to the right of
+  // BASIS / PHASE 1 / PHASE 2 / TRAINER, near the top edge of the card.
+  // Do NOT choose the shortest OCR line from the whole top area: that caused
+  // false names such as "g ee" on real cards.
+  const lines=[...nameTexts.flatMap(t=>cleanLines(t)),...cleanLines(topText)];
+  const reject=/^(basis|phase|phase 1|phase 2|trainer|item|supporter|energie|energy|hp|kp|nr|illus|illustr|schwäche|resistenz|rückzug|weakness|resistance|retreat|pokemon|pokémon)$/i;
+  const candidates=[];
+  for(const line of lines){
+    let s=line.replace(/^[^A-Za-zÀ-ÿ\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF]+/,"")
+      .replace(/[^A-Za-zÀ-ÿ\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF .'-]/g," ")
+      .replace(/\s+/g," ").trim();
+    if(!s||s.length<2||s.length>24||reject.test(s)||/\d/.test(s))continue;
     if(/^(BASIS|PHASE|TRAINER)/i.test(s))continue;
-    // Favor short title-like lines near the top.
-    out.push(s);
+    // Avoid attack/effect text that may leak into the name crop.
+    if(/(angriff|attack|entwickelt sich|entwickelt|hp|kp|schaden|zug|münze|coin|retreat|weakness)/i.test(s))continue;
+    candidates.push(s);
   }
-  // Prefer a line containing common Pokémon-name capitalization and avoid long OCR phrases.
-  out.sort((a,b)=>a.length-b.length);
-  return out[0]||"";
+  // Prefer the line that looks most like a Pokémon title: short, one line,
+  // and not just a tiny OCR fragment.
+  candidates.sort((a,b)=>{
+    const score=x=>{
+      let z=0;
+      if(x.length>=3&&x.length<=18)z+=4;
+      if(/^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß' -]+$/.test(x))z+=3;
+      if(x.includes(' '))z+=1;
+      if(x.length<=2)z-=5;
+      return z;
+    };
+    return score(b)-score(a) || a.length-b.length;
+  });
+  return candidates[0]||"";
 }
 async function tcgSearch(name,number){
   try{
@@ -229,8 +250,10 @@ function buildDescription(r){
   return parts.join(". ")+".";
 }
 function webQuery(r){
-  // Never send weak OCR names to Google/eBay. Number and confirmed set/name first.
-  const bits=[r.number,r.set,r.name].filter(Boolean);
+  // Never send raw OCR names to Google/eBay. Only a database-confirmed or
+  // manually corrected name is allowed into the web query.
+  const confirmedName = r.nameConfirmed ? r.name : "";
+  const bits=[r.number,r.set,confirmedName].filter(Boolean);
   if(!bits.length && r.ocrNumber) bits.push(r.ocrNumber);
   return `Pokemon ${bits.join(" ")}`.trim();
 }
@@ -262,7 +285,7 @@ async function retryTcg(i){
       const total=r.number.includes('/')?r.number.split('/')[1]:'';
       r.number=String(best.localId).padStart(3,'0')+(total?'/'+total:'');
     }
-    r.match=true;r.webSource='TCGdex';r.title=buildTitle(r);
+    r.match=true;r.webSource='TCGdex';r.nameConfirmed=true;r.title=buildTitle(r);
     render();update();
     alert('TCGdex-Treffer gefunden und übernommen.');
   }else{
@@ -324,6 +347,7 @@ function render(){
     const r=state.rows[+e.target.dataset.i];
     const k=e.target.dataset.k;
     r[k]=e.target.value;
+    if(k==="name") r.nameConfirmed=!!e.target.value.trim();
 
     // Variant, language, name, set or number immediately rebuild the eBay title.
     if(["name","number","set","language","variant"].includes(k)){
@@ -356,9 +380,12 @@ async function analyze(){
       if(state.cancel)break;
       const file=state.files[i];
       $("status").textContent=`Analysiere Karte ${i+1}/${total} …`;
-      let top="",numberText="",full="";
+      let top="",numberText="",full="",nameTexts=[];
       try{
         const topImg=await preprocess(file,"top","normal");
+        const nameImg=await preprocess(file,"name","normal");
+        const nameWideImg=await preprocess(file,"name-wide","normal");
+        for(const img of [nameImg,nameWideImg]) for(const psm of [6,7,11,13]) nameTexts.push(await ocrPass(worker,img,psm));
         const n1=await preprocess(file,"number","normal");
         const n2=await preprocess(file,"number","high");
         const n3=await preprocess(file,"number","soft");
@@ -370,7 +397,7 @@ async function analyze(){
         full=await ocrPass(worker,fullImg,6);
         numberText=texts.join("\n")+"\n"+full;
       }catch(e){numberText="";}
-      const name=findName(top,full);
+      const name=findName(nameTexts,top,full);
       const number=findNumber(numberText);
       const cand=await tcgSearch(name,number);
       const best=cand[0];
@@ -381,7 +408,7 @@ async function analyze(){
       const cardNumber=best?.localId && printedTotalFromOcr ? String(best.localId).padStart(String(number).split("/")[0].length,"0")+"/"+printedTotalFromOcr : (best?.localId ? String(best.localId) : number);
       const finalName=best?.name||name;
       const lang="Deutsch";
-      state.rows.push({sku:"PKM-"+Date.now().toString(36).toUpperCase()+"-"+String(i+1).padStart(3,"0"),file,url:URL.createObjectURL(file),ocrName:name,ocrNumber:number,ocr:numberText+"\n--- NAME ---\n"+top,name:finalName,set,number:cardNumber,language:lang,condition:"",variant:"",price:"",title:buildTitle({name:finalName,number:cardNumber,set,language:lang,condition:"",variant:""}),match:!!best&&!!exact});
+      state.rows.push({sku:"PKM-"+Date.now().toString(36).toUpperCase()+"-"+String(i+1).padStart(3,"0"),file,url:URL.createObjectURL(file),ocrName:name,ocrNumber:number,ocr:numberText+"\n--- NAME ---\n"+top+"\n--- NAME CROPS ---\n"+nameTexts.join("\n"),name:finalName,nameConfirmed:!!best,set,number:cardNumber,language:lang,condition:"",variant:"",price:"",title:buildTitle({name:finalName,number:cardNumber,set,language:lang,condition:"",variant:""}),match:!!best&&!!exact});
       render();update();setProgress(i+1,total);
     }
   }catch(e){
@@ -399,7 +426,7 @@ $("analyze").onclick=analyze;update();
 <script>
 /* V1.5 safety layer: never silently trust a weak OCR number/name combination. */
 window.POKEMON_SCANNER_V18 = {
-  version: "2.1",
+  version: "2.2",
   build: "2026-08-21-10",
   normalizeNumber: function(v) {
     if (!v) return "";
