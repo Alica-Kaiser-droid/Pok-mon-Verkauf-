@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Pokémon → eBay Scanner V1.4</title>
+<title>Pokémon → eBay Scanner V1.5</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f5f7fb}
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
@@ -26,7 +26,7 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 <body>
 <div class="wrap">
 <h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V1.4</span></h1>
-<div class="sub">V1.4 · Nummern-Scan + TCGdex-Abgleich</div><div class="small" style="margin-top:4px">Build: 2026-08-21-01 · Wenn du diesen Build siehst, ist die neue Datei geladen.</div>
+<div class="sub">V1.5 · Sicherheitsprüfung gegen falsche Treffer</div><div class="small" style="margin-top:4px">Build: 2026-08-21-02 · Wenn du diesen Build siehst, ist die neue Datei geladen.<div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und erkannte Kartendaten zusammenpassen.</div></div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
@@ -247,4 +247,30 @@ async function analyze(){
 }
 $("analyze").onclick=analyze;update();
 </script>
+
+<script>
+/* V1.5 safety layer: never silently trust a weak OCR number/name combination. */
+window.POKEMON_SCANNER_V15 = {
+  version: "1.5",
+  build: "2026-08-21-02",
+  normalizeNumber: function(v) {
+    if (!v) return "";
+    return String(v).trim().replace(/\s+/g, "").replace(/[Oo]/g, "0");
+  },
+  isPlausibleCardNumber: function(v) {
+    const m = this.normalizeNumber(v).match(/^(\d{1,3})\/(\d{1,3})$/);
+    if (!m) return false;
+    const n = parseInt(m[1], 10), total = parseInt(m[2], 10);
+    return n >= 1 && total >= 1 && n <= total;
+  },
+  safetyScore: function(numberOk, nameOk, setOk) {
+    let s = 0;
+    if (numberOk) s += 60;
+    if (nameOk) s += 25;
+    if (setOk) s += 15;
+    return s;
+  }
+};
+</script>
+
 </body></html>
