@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Pokémon → eBay Scanner V2.3</title>
+<title>Pokémon → eBay Scanner V2.4</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f5f7fb}
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
@@ -25,8 +25,8 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 </head>
 <body>
 <div class="wrap">
-<h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V2.1</span></h1>
-<div class="sub">V2.3 · Nummer + Set-Größe + Bildabgleich · Kartenname nicht mehr OCR-bestimmend · Batch bis 50 Fotos</div><div class="small" style="margin-top:4px">Build: 2026-08-21-09 · Erst Kartennummer + gedruckte Setgröße, danach visueller Kartenabgleich; OCR-Name ist nur Fallback. Bis zu 50 Fotos pro Durchlauf.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen. Bei unsicheren Treffern kannst du Google und eBay direkt aus der Karte öffnen.</div>
+<h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V2.4</span></h1>
+<div class="sub">V2.4 · Kartennummer nur aus dem unteren Nummernfeld · Set + Bildabgleich · Batch bis 50 Fotos</div><div class="small" style="margin-top:4px">Build: 2026-08-21-10 · Nummern-OCR ausschließlich im unteren Kartenbereich; kein Vollbild-OCR für die Kartennummer. Bis zu 50 Fotos pro Durchlauf.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen. Bei unsicheren Treffern kannst du Google und eBay direkt aus der Karte öffnen.</div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
@@ -94,6 +94,7 @@ function preprocess(file, kind, variant="normal"){
       if(kind==="top"){y0=.015;y1=.18;x0=.05;x1=.95;}
       if(kind==="number"){y0=.82;y1=.995;x0=.00;x1=.92;}
       if(kind==="number-left"){y0=.86;y1=.995;x0=.00;x1=.52;}
+      if(kind==="number-print"){y0=.90;y1=.995;x0=.07;x1=.50;}
       if(kind==="name"){y0=.00;y1=.105;x0=.22;x1=.82;}
       if(kind==="name-wide"){y0=.00;y1=.145;x0=.18;x1=.88;}
       if(kind==="full"){y0=0;y1=1;x0=0;x1=1;}
@@ -135,23 +136,30 @@ function normalizeNumCandidate(a,b){
   return String(n).padStart(3,"0")+"/"+String(t).padStart(3,"0");
 }
 function findNumber(text){
-  const raw=String(text||"").replace(/O/gi,"0").replace(/[Il|]/g,"1");
+  // V2.4: this function is fed ONLY the dedicated bottom number crop.
+  // Prefer explicit slash formats; never guess from unrelated full-card numbers.
+  const raw=String(text||"").replace(/[Oo]/g,"0").replace(/[Il|]/g,"1");
   const compact=raw.replace(/\s+/g," ");
-  const patterns=[
-    /(\d{1,3})\s*[\/|\\]\s*(\d{1,3})/g,
-    /(\d{1,3})\s*[\-–]\s*(\d{1,3})/g,
-    /(^|\s)(\d{1,3})\s+(\d{1,3})(?=\s|$)/g
+  const slashPatterns=[
+    /(\d{1,3})\s*[\/\\|:]\s*(\d{1,3})/g,
+    /(\d{1,3})\s*[\-–]\s*(\d{1,3})/g
   ];
-  for(const re of patterns){ let m; while((m=re.exec(compact))){ const v=normalizeNumCandidate(m[m.length-2],m[m.length-1]); if(v)return v; }}
-  // OCR sometimes reads the slash as punctuation or drops it entirely.
-  const digits=[...compact.matchAll(/\b\d{2,3}\b/g)].map(m=>m[0]);
-  for(let i=0;i<digits.length-1;i++){ const v=normalizeNumCandidate(digits[i],digits[i+1]); if(v)return v; }
+  for(const re of slashPatterns){ let m; while((m=re.exec(compact))){
+    const v=normalizeNumCandidate(m[1],m[2]);
+    if(v && parseInt(v.split('/')[1],10)>=10) return v;
+  }}
+  // If OCR drops the slash, only accept two adjacent 2–3 digit groups.
+  const pairs=[...compact.matchAll(/\b(\d{2,3})\s+(\d{2,3})\b/g)];
+  for(const m of pairs){
+    const v=normalizeNumCandidate(m[1],m[2]);
+    if(v && parseInt(v.split('/')[1],10)>=10) return v;
+  }
   return "";
 }
 function numberCandidates(texts){
-  const out=[];
-  for(const t of texts){ const n=findNumber(t); if(n&&!out.includes(n))out.push(n); }
-  return out;
+  const counts=new Map();
+  for(const t of texts){ const n=findNumber(t); if(n) counts.set(n,(counts.get(n)||0)+1); }
+  return [...counts.entries()].sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
 }
 
 const bad=/^(basis|phase|phase 1|phase 2|trainer|item|supporter|energie|energy|hp|kp|nr|illus|illustr|schwäche|resistenz|rückzug|weakness|resistance|retreat|pokemon|pokémon)$/i;
@@ -349,7 +357,7 @@ async function retryNumber(i){
   const worker=await Tesseract.createWorker("deu+eng");
   try{
     const imgs=[];
-    for(const v of ["normal","high","soft"]){ imgs.push(await preprocess(r.file,"number",v)); imgs.push(await preprocess(r.file,"number-left",v)); }
+    for(const v of ["normal","high","soft"]){ imgs.push(await preprocess(r.file,"number-print",v)); }
     const texts=[];
     for(const img of imgs){ for(const psm of [6,7,11,13]) texts.push(await ocrPass(worker,img,psm)); }
     const nums=numberCandidates(texts);
@@ -366,7 +374,7 @@ function render(){
   $("results").innerHTML=state.rows.map((r,i)=>{
     const title=buildTitle(r);
     return `<div class="item">
-      <div class="row"><img class="preview" src="${r.url}"><div><h3>Karte ${i+1}</h3><span class="badge ${r.match?"ok":"warn"}">${r.match?"🟢 Nummer + Set bestätigt":"🟡 Prüfen"}</span><div class="small">Name-OCR: ${esc(r.ocrName||"–")} · Nummer-OCR: ${esc(r.ocrNumber||"–")}</div><div class="confidence">Suchbegriff: <b>${esc(webQuery(r)||"–")}</b></div></div></div>
+      <div class="row"><img class="preview" src="${r.url}"><div><h3>Karte ${i+1}</h3><span class="badge ${r.match?"ok":"warn"}">${r.match?"🟢 Nummer + Set bestätigt":"🟡 Prüfen"}</span><div class="small">Name-OCR: ${esc(r.ocrName||"–")} · Nummer-OCR: ${esc(r.ocrNumber||"–")}</div><div class="small">🔢 Nummernscan: nur unteres Nummernfeld</div><div class="confidence">Suchbegriff: <b>${esc(webQuery(r)||"–")}</b></div></div></div>
       <div class="webtools">
         <button type="button" class="secondary" data-web-google="${i}">🔎 Google bestätigen</button>
         <button type="button" class="secondary" data-web-ebay="${i}">🛒 eBay prüfen</button>
@@ -438,16 +446,17 @@ async function analyze(){
         const nameImg=await preprocess(file,"name","normal");
         const nameWideImg=await preprocess(file,"name-wide","normal");
         for(const img of [nameImg,nameWideImg]) for(const psm of [6,7,11,13]) nameTexts.push(await ocrPass(worker,img,psm));
-        const n1=await preprocess(file,"number","normal");
-        const n2=await preprocess(file,"number","high");
-        const n3=await preprocess(file,"number","soft");
-        const nl=await preprocess(file,"number-left","high");
+        const n1=await preprocess(file,"number-print","normal");
+        const n2=await preprocess(file,"number-print","high");
+        const n3=await preprocess(file,"number-print","soft");
         const fullImg=await preprocess(file,"full","normal");
         top=await ocrPass(worker,topImg,7);
         const texts=[];
-        for(const img of [n1,n2,n3,nl]) for(const psm of [6,7,11,13]) texts.push(await ocrPass(worker,img,psm));
+        for(const img of [n1,n2,n3]) for(const psm of [6,7,11,13]) texts.push(await ocrPass(worker,img,psm));
+        // IMPORTANT: full-card OCR is kept for diagnostics/name fallback only.
+        // It is NOT allowed to contribute to Kartennummer detection.
         full=await ocrPass(worker,fullImg,6);
-        numberText=texts.join("\n")+"\n"+full;
+        numberText=texts.join("\n");
       }catch(e){numberText="";}
       const name=findName(nameTexts,top,full);
       const number=findNumber(numberText);
@@ -478,8 +487,8 @@ $("analyze").onclick=analyze;update();
 <script>
 /* V1.5 safety layer: never silently trust a weak OCR number/name combination. */
 window.POKEMON_SCANNER_V18 = {
-  version: "2.2",
-  build: "2026-08-21-10",
+  version: "2.4",
+  build: "2026-08-21-10-number-crop",
   normalizeNumber: function(v) {
     if (!v) return "";
     return String(v).trim().replace(/\s+/g, "").replace(/[Oo]/g, "0");
