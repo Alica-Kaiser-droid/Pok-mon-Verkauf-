@@ -26,7 +26,7 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 <body>
 <div class="wrap">
 <h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V1.4</span></h1>
-<div class="sub">V1.6 · Kartennummer → Set → Name</div><div class="small" style="margin-top:4px">Build: 2026-08-21-03 · Wenn du diesen Build siehst, ist die neue Datei geladen.<div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und erkannte Kartendaten zusammenpassen.</div></div>
+<div class="sub">V1.7 · Titel + Zustand + Variante automatisch</div><div class="small" style="margin-top:4px">Build: 2026-08-21-04 · Wenn du diesen Build siehst, ist die neue Datei geladen.<div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und erkannte Kartendaten zusammenpassen.</div></div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
@@ -171,9 +171,23 @@ async function tcgSearch(name,number){
     return Array.isArray(arr)?arr.slice(0,12):[];
   }catch(e){return []}
 }
+function buildTitle(r){
+  return "Pokémon "+[r.name,r.number,r.set,r.language,r.variant&&r.variant!=="Normal"?r.variant:""].filter(Boolean).join(" ");
+}
+function buildDescription(r){
+  const parts=[
+    "Pokémon Karte "+(r.name||""),
+    r.number ? "Kartennummer: "+r.number : "",
+    r.set ? "Set: "+r.set : "",
+    r.language ? "Sprache: "+r.language : "",
+    r.variant && r.variant!=="Normal" ? "Variante: "+r.variant : "",
+    r.condition ? "Zustand: "+r.condition : ""
+  ].filter(Boolean);
+  return parts.join(". ")+".";
+}
 function render(){
   $("results").innerHTML=state.rows.map((r,i)=>{
-    const title="Pokémon "+[r.name,r.number,r.set,r.language].filter(Boolean).join(" ");
+    const title=buildTitle(r);
     return `<div class="item">
       <div class="row"><img class="preview" src="${r.url}"><div><h3>Karte ${i+1}</h3><span class="badge ${r.match?"ok":"warn"}">${r.match?"🟢 Nummer + Set bestätigt":"🟡 Prüfen"}</span><div class="small">Name-OCR: ${esc(r.ocrName||"–")} · Nummer-OCR: ${esc(r.ocrNumber||"–")}</div></div></div>
       <label><span>Name</span><input data-i="${i}" data-k="name" value="${esc(r.name)}"></label>
@@ -186,21 +200,31 @@ function render(){
         <label><span>Zustand</span><select data-i="${i}" data-k="condition">${["","Near Mint","Excellent","Good","Played","Damaged"].map(x=>`<option value="${esc(x)}" ${x==r.condition?"selected":""}>${x||"Bitte wählen"}</option>`).join("")}</select></label>
         <label><span>Variante</span><select data-i="${i}" data-k="variant">${["","Normal","Holo","Reverse Holo","Promo","Unsicher"].map(x=>`<option value="${esc(x)}" ${x==r.variant?"selected":""}>${x||"Bitte wählen"}</option>`).join("")}</select></label>
       </div>
-      <label><span>eBay-Titel</span><input data-i="${i}" data-k="title" value="${esc(r.title||title)}"></label>
+      <label><span>eBay-Titel (automatisch)</span><input data-i="${i}" data-k="title" value="${esc(r.title||title)}"></label>
+      <div class="small" style="margin-top:6px">Der Titel wird automatisch angepasst, wenn du Variante oder Sprache änderst.</div>
       <label><span>Preis (€)</span><input data-i="${i}" data-k="price" type="number" step="0.01" value="${esc(r.price)}"></label>
       <details><summary>Erkannter OCR-Text</summary><div class="ocr">${esc(r.ocr)}</div></details>
     </div>`;
   }).join("");
   $("results").querySelectorAll("[data-i]").forEach(el=>el.oninput=e=>{
-    const r=state.rows[+e.target.dataset.i];r[e.target.dataset.k]=e.target.value;
-    if(["name","number","set","language"].includes(e.target.dataset.k))r.title="Pokémon "+[r.name,r.number,r.set,r.language].filter(Boolean).join(" ");
+    const r=state.rows[+e.target.dataset.i];
+    const k=e.target.dataset.k;
+    r[k]=e.target.value;
+
+    // Variant, language, name, set or number immediately rebuild the eBay title.
+    if(["name","number","set","language","variant"].includes(k)){
+      r.title=buildTitle(r);
+      const titleEl=$(`results`).querySelector(`[data-i="${+e.target.dataset.i}"][data-k="title"]`);
+      if(titleEl)titleEl.value=r.title;
+    }
+    // Condition is carried directly into the CSV description and Condition column.
   });
 }
 function csvEscape(v){return '"'+String(v??"").replace(/"/g,'""')+'"'}
 function makeCSV(){
   const h=["SKU","Action","Title","Description","Category","Condition","Price","Quantity","Language","Set","Card Number","Variant","Picture Filename"];
   const lines=[h.map(csvEscape).join(",")];
-  for(const r of state.rows)lines.push([r.sku,"Add",r.title||"Pokémon "+[r.name,r.number,r.set,r.language].filter(Boolean).join(" "),`Pokémon Karte ${r.name}. Set: ${r.set}. Sprache: ${r.language}. Zustand: ${r.condition||"Bitte prüfen"}.`,"Sammelkartenspiele:Pokémon TCG",r.condition,r.price,1,r.language,r.set,r.number,r.variant,r.file.name].map(csvEscape).join(","));
+  for(const r of state.rows)lines.push([r.sku,"Add",r.title||buildTitle(r),buildDescription(r),"Sammelkartenspiele:Pokémon TCG",r.condition,r.price,1,r.language,r.set,r.number,r.variant,r.file.name].map(csvEscape).join(","));
   return lines.join("\r\n");
 }
 $("csv").onclick=()=>{if(!state.rows.length)return alert("Erst analysieren.");const b=new Blob(["\uFEFF"+makeCSV()],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="pokemon-ebay-listings.csv";a.click()};
