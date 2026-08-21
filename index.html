@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Pokémon → eBay Scanner V1.5</title>
+<title>Pokémon → eBay Scanner V1.8</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f5f7fb}
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
@@ -25,8 +25,8 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 </head>
 <body>
 <div class="wrap">
-<h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V1.4</span></h1>
-<div class="sub">V1.7 · Titel + Zustand + Variante automatisch</div><div class="small" style="margin-top:4px">Build: 2026-08-21-04 · Wenn du diesen Build siehst, ist die neue Datei geladen.<div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und erkannte Kartendaten zusammenpassen.</div></div>
+<h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V1.8</span></h1>
+<div class="sub">V1.8 · Batch-Scan bis 50 Fotos · Nummer + Set zuerst · eBay-Titel, Variante und Zustand automatisch</div><div class="small" style="margin-top:4px">Build: 2026-08-21-08 · Batch-Verarbeitung mit Fortschritt und Einzelprüfung.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen.</div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
@@ -36,10 +36,16 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 <label><span>Fotos aufnehmen</span><input id="camera" type="file" accept="image/*" capture="environment" multiple></label>
 <label><span>Fotos auswählen</span><input id="files" type="file" accept="image/*" multiple></label>
 <div class="status" id="status">Noch keine Fotos.</div>
+<div id="progressWrap" class="hidden" style="margin-top:10px">
+  <div class="row" style="justify-content:space-between"><span class="small" id="progressText">0 / 0</span><span class="small" id="progressPercent">0%</span></div>
+  <progress id="progress" value="0" max="100" style="width:100%;height:12px"></progress>
+</div>
 <div class="row" style="margin-top:10px">
-<button id="analyze" disabled>Fotos analysieren</button>
+<button id="analyze" disabled>Alle Fotos analysieren</button>
+<button id="cancel" class="secondary" disabled>Stoppen</button>
 <button id="clear" class="secondary">Leeren</button>
 </div>
+<div class="small" style="margin-top:8px">Tipp: Wähle auf dem iPhone direkt 10, 20 oder 50 Fotos. Die App nimmt maximal 50 pro Durchlauf.</div>
 </div>
 
 <div class="card">
@@ -54,13 +60,21 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"></script>
 <script>
-const state={files:[],rows:[]};
+const state={files:[],rows:[],running:false,cancel:false};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-function update(){ $("nPhotos").textContent=state.files.length; $("nFound").textContent=state.rows.filter(x=>x.match).length; $("analyze").disabled=!state.files.length; }
-function addFiles(fs){state.files.push(...Array.from(fs));state.files=state.files.slice(0,50);$("status").textContent=state.files.length+" Fotos bereit.";update();}
-$("camera").onchange=e=>addFiles(e.target.files);$("files").onchange=e=>addFiles(e.target.files);
-$("clear").onclick=()=>{state.files=[];state.rows=[];$("results").innerHTML="";$("status").textContent="Geleert.";update();};
+function update(){ $("nPhotos").textContent=state.files.length; $("nFound").textContent=state.rows.filter(x=>x.match).length; $("analyze").disabled=state.running||!state.files.length; $("cancel").disabled=!state.running; }
+function setProgress(done,total){const pct=total?Math.round(done/total*100):0;$("progressWrap").classList.remove("hidden");$("progress").value=pct;$("progressText").textContent=`${done} / ${total}`;$("progressPercent").textContent=pct+"%";}
+function addFiles(fs){
+  const incoming=Array.from(fs||[]).filter(f=>f.type.startsWith("image/"));
+  const existing=new Set(state.files.map(f=>`${f.name}|${f.size}|${f.lastModified}`));
+  for(const f of incoming){if(state.files.length>=50)break;const key=`${f.name}|${f.size}|${f.lastModified}`;if(!existing.has(key)){state.files.push(f);existing.add(key);}}
+  $("status").textContent=state.files.length>=50?"50 Fotos bereit (Maximum pro Durchlauf).":`${state.files.length} Fotos bereit.`;
+  update();
+}
+$("camera").onchange=e=>{addFiles(e.target.files);e.target.value=""};$("files").onchange=e=>{addFiles(e.target.files);e.target.value=""};
+$("clear").onclick=()=>{if(state.running)return;state.files=[];state.rows=[];$("results").innerHTML="";$("progressWrap").classList.add("hidden");$("status").textContent="Geleert.";update();};
+$("cancel").onclick=()=>{if(state.running){state.cancel=true;$("status").textContent="Stoppen nach der aktuellen Karte …";}};
 
 function preprocess(file, kind, variant="normal"){
   return new Promise((resolve,reject)=>{
@@ -172,7 +186,8 @@ async function tcgSearch(name,number){
   }catch(e){return []}
 }
 function buildTitle(r){
-  return "Pokémon "+[r.name,r.number,r.set,r.language,r.variant&&r.variant!=="Normal"?r.variant:""].filter(Boolean).join(" ");
+  const parts=[r.name,r.number,r.set,r.language,r.variant&&r.variant!=="Normal"?r.variant:"",r.condition].filter(Boolean);
+  return ("Pokémon "+parts.join(" ")).slice(0,80);
 }
 function buildDescription(r){
   const parts=[
@@ -201,7 +216,7 @@ function render(){
         <label><span>Variante</span><select data-i="${i}" data-k="variant">${["","Normal","Holo","Reverse Holo","Promo","Unsicher"].map(x=>`<option value="${esc(x)}" ${x==r.variant?"selected":""}>${x||"Bitte wählen"}</option>`).join("")}</select></label>
       </div>
       <label><span>eBay-Titel (automatisch)</span><input data-i="${i}" data-k="title" value="${esc(r.title||title)}"></label>
-      <div class="small" style="margin-top:6px">Der Titel wird automatisch angepasst, wenn du Variante oder Sprache änderst.</div>
+      <div class="small" style="margin-top:6px">Der eBay-Titel wird sofort angepasst, sobald Name, Nummer, Set, Sprache, Variante <b>oder Zustand</b> geändert wird. Zustand wird zusätzlich in die CSV übernommen.</div>
       <label><span>Preis (€)</span><input data-i="${i}" data-k="price" type="number" step="0.01" value="${esc(r.price)}"></label>
       <details><summary>Erkannter OCR-Text</summary><div class="ocr">${esc(r.ocr)}</div></details>
     </div>`;
@@ -231,74 +246,62 @@ $("csv").onclick=()=>{if(!state.rows.length)return alert("Erst analysieren.");co
 $("copy").onclick=async()=>{if(!state.rows.length)return alert("Erst analysieren.");await navigator.clipboard.writeText(makeCSV());$("status").textContent="CSV kopiert.";};
 
 async function analyze(){
-  $("analyze").disabled=true;state.rows=[];
+  if(state.running||!state.files.length)return;
+  state.running=true;state.cancel=false;state.rows=[];render();update();
+  const total=state.files.length;setProgress(0,total);
   $("status").textContent="OCR-Engine wird geladen …";
-  const worker=await Tesseract.createWorker("deu+eng");
-  for(let i=0;i<state.files.length;i++){
-    const file=state.files[i];
-    $("status").textContent=`Analysiere ${i+1}/${state.files.length} …`;
-
-    let top="",numberText="",full="";
-    try{
-      const topImg=await preprocess(file,"top","normal");
-      const n1=await preprocess(file,"number","normal");
-      const n2=await preprocess(file,"number","high");
-      const n3=await preprocess(file,"number","soft");
-      const fullImg=await preprocess(file,"full","normal");
-
-      top=await ocrPass(worker,topImg,7);
-      const a=await ocrPass(worker,n1,6);
-      const b=await ocrPass(worker,n2,7);
-      const c=await ocrPass(worker,n3,6);
-      full=await ocrPass(worker,fullImg,6);
-      numberText=[a,b,c,full].join("\n");
-    }catch(e){}
-
-    const name=findName(top,full);
-    const number=findNumber(numberText);
-    const cand=await tcgSearch(name,number);
-    const best=cand[0];
-
-    const localFromOcr=number ? number.split("/")[0].replace(/^0+/,"") : "";
-    const printedTotalFromOcr=number ? (number.split("/")[1]||"") : "";
-    const exact=!!best && !!number &&
-      String(best.localId).replace(/^0+/,"")===localFromOcr &&
-      (!printedTotalFromOcr ||
-       String(best.set?.cardCount?.official||"")===printedTotalFromOcr ||
-       String(best.set?.cardCount?.total||"")===printedTotalFromOcr);
-
-    const set=best?.set?.name||"";
-    // Keep the number exactly as printed, e.g. 137/159, even if TCGdex
-    // reports extra cards in its total count.
-    const cardNumber=best?.localId && printedTotalFromOcr
-      ? String(best.localId).padStart(String(number).split("/")[0].length,"0")+"/"+printedTotalFromOcr
-      : (best?.localId ? String(best.localId) : number);
-
-    const finalName=best?.name||name;
-    const lang="Deutsch";
-
-    state.rows.push({
-      sku:"PKM-"+Date.now().toString(36).toUpperCase()+"-"+String(i+1).padStart(3,"0"),
-      file,url:URL.createObjectURL(file),
-      ocrName:name,ocrNumber:number,ocr:numberText+"\n--- NAME ---\n"+top,
-      name:finalName,set,number:cardNumber,language:lang,condition:"",variant:"",price:"",
-      title:"Pokémon "+[finalName,cardNumber,set,lang].filter(Boolean).join(" "),
-      match:!!best&&!!exact
-    });
-    render();update();
+  let worker;
+  try{
+    worker=await Tesseract.createWorker("deu+eng");
+    for(let i=0;i<total;i++){
+      if(state.cancel)break;
+      const file=state.files[i];
+      $("status").textContent=`Analysiere Karte ${i+1}/${total} …`;
+      let top="",numberText="",full="";
+      try{
+        const topImg=await preprocess(file,"top","normal");
+        const n1=await preprocess(file,"number","normal");
+        const n2=await preprocess(file,"number","high");
+        const n3=await preprocess(file,"number","soft");
+        const fullImg=await preprocess(file,"full","normal");
+        top=await ocrPass(worker,topImg,7);
+        const a=await ocrPass(worker,n1,6);
+        const b=await ocrPass(worker,n2,7);
+        const c=await ocrPass(worker,n3,6);
+        full=await ocrPass(worker,fullImg,6);
+        numberText=[a,b,c,full].join("\n");
+      }catch(e){numberText="";}
+      const name=findName(top,full);
+      const number=findNumber(numberText);
+      const cand=await tcgSearch(name,number);
+      const best=cand[0];
+      const localFromOcr=number ? number.split("/")[0].replace(/^0+/ ,"") : "";
+      const printedTotalFromOcr=number ? (number.split("/")[1]||"") : "";
+      const exact=!!best && !!number && String(best.localId).replace(/^0+/ ,"")===localFromOcr && (!printedTotalFromOcr || String(best.set?.cardCount?.official||"")===printedTotalFromOcr || String(best.set?.cardCount?.total||"")===printedTotalFromOcr);
+      const set=best?.set?.name||"";
+      const cardNumber=best?.localId && printedTotalFromOcr ? String(best.localId).padStart(String(number).split("/")[0].length,"0")+"/"+printedTotalFromOcr : (best?.localId ? String(best.localId) : number);
+      const finalName=best?.name||name;
+      const lang="Deutsch";
+      state.rows.push({sku:"PKM-"+Date.now().toString(36).toUpperCase()+"-"+String(i+1).padStart(3,"0"),file,url:URL.createObjectURL(file),ocrName:name,ocrNumber:number,ocr:numberText+"\n--- NAME ---\n"+top,name:finalName,set,number:cardNumber,language:lang,condition:"",variant:"",price:"",title:buildTitle({name:finalName,number:cardNumber,set,language:lang,condition:"",variant:""}),match:!!best&&!!exact});
+      render();update();setProgress(i+1,total);
+    }
+  }catch(e){
+    $("status").textContent="Fehler beim Analysieren: "+(e?.message||e);
+  }finally{
+    try{if(worker)await worker.terminate();}catch(e){}
+    state.running=false;
+    $("status").textContent=state.cancel?`Gestoppt: ${state.rows.length}/${total} Fotos analysiert.`:`Fertig: ${state.rows.length}/${total} Fotos analysiert.`;
+    setProgress(state.rows.length,total);update();
   }
-  await worker.terminate();
-  $("status").textContent=`Fertig: ${state.files.length} Fotos analysiert.`;
-  $("analyze").disabled=false;
 }
 $("analyze").onclick=analyze;update();
 </script>
 
 <script>
 /* V1.5 safety layer: never silently trust a weak OCR number/name combination. */
-window.POKEMON_SCANNER_V15 = {
-  version: "1.5",
-  build: "2026-08-21-02",
+window.POKEMON_SCANNER_V18 = {
+  version: "1.8",
+  build: "2026-08-21-08",
   normalizeNumber: function(v) {
     if (!v) return "";
     return String(v).trim().replace(/\s+/g, "").replace(/[Oo]/g, "0");
