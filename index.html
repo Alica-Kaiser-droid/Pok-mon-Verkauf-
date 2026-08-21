@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Pokémon → eBay Scanner V2.2</title>
+<title>Pokémon → eBay Scanner V2.3</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f5f7fb}
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
@@ -26,7 +26,7 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 <body>
 <div class="wrap">
 <h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V2.1</span></h1>
-<div class="sub">V2.2 · Gezielter Kartenname-Scan · Nummer + Set-Abgleich · Batch bis 50 Fotos</div><div class="small" style="margin-top:4px">Build: 2026-08-21-09 · Kartenname wird gezielt rechts neben BASIS/PHASE gescannt · Bis zu 50 Fotos pro Durchlauf, mit Fortschritt und Einzelprüfung.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen. Bei unsicheren Treffern kannst du Google und eBay direkt aus der Karte öffnen.</div>
+<div class="sub">V2.3 · Nummer + Set-Größe + Bildabgleich · Kartenname nicht mehr OCR-bestimmend · Batch bis 50 Fotos</div><div class="small" style="margin-top:4px">Build: 2026-08-21-09 · Erst Kartennummer + gedruckte Setgröße, danach visueller Kartenabgleich; OCR-Name ist nur Fallback. Bis zu 50 Fotos pro Durchlauf.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen. Bei unsicheren Treffern kannst du Google und eBay direkt aus der Karte öffnen.</div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
@@ -188,45 +188,97 @@ function findName(nameTexts,topText,fullText){
   });
   return candidates[0]||"";
 }
-async function tcgSearch(name,number){
+const setCache = { all:null, byCount:new Map() };
+async function getSetsByPrintedTotal(total){
+  const key=String(total||'');
+  if(!key) return [];
+  if(setCache.byCount.has(key)) return setCache.byCount.get(key);
+  try{
+    if(!setCache.all){
+      const res=await fetch("https://api.tcgdex.net/v2/de/sets");
+      if(!res.ok) throw new Error("Sets konnten nicht geladen werden");
+      setCache.all=await res.json();
+    }
+    const arr=(Array.isArray(setCache.all)?setCache.all:[]).filter(s=>
+      String(s?.cardCount?.official||'')===key || String(s?.cardCount?.total||'')===key
+    );
+    setCache.byCount.set(key,arr);
+    return arr;
+  }catch(e){ return []; }
+}
+async function getCardBySetAndLocal(setId,local){
+  try{
+    const res=await fetch("https://api.tcgdex.net/v2/de/sets/"+encodeURIComponent(setId)+"/"+encodeURIComponent(local));
+    if(!res.ok)return null;
+    return await res.json();
+  }catch(e){return null;}
+}
+async function loadImageForCompare(url){
+  return await new Promise((resolve,reject)=>{
+    const im=new Image(); im.crossOrigin='anonymous';
+    im.onload=()=>resolve(im); im.onerror=reject; im.src=url;
+  });
+}
+function imageSignatureFromCanvas(canvas){
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  const W=32,H=44; const c=document.createElement('canvas'); c.width=W;c.height=H;
+  const x=c.getContext('2d'); x.drawImage(canvas,0,0,canvas.width,canvas.height,0,0,W,H);
+  const d=x.getImageData(0,0,W,H).data, a=[];
+  for(let i=0;i<d.length;i+=4){a.push((.299*d[i]+.587*d[i+1]+.114*d[i+2])/255)}
+  return a;
+}
+function signatureDistance(a,b){
+  if(!a||!b||a.length!==b.length)return 999;
+  let s=0; for(let i=0;i<a.length;i++) s+=Math.abs(a[i]-b[i]);
+  return s/a.length;
+}
+async function compareCardToCandidates(file,candidates){
+  try{
+    const src=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=URL.createObjectURL(file)});
+    const c=document.createElement('canvas'); c.width=320;c.height=Math.round(320*src.height/src.width);
+    const ctx=c.getContext('2d'); ctx.drawImage(src,0,0,c.width,c.height);
+    const srcSig=imageSignatureFromCanvas(c);
+    const scored=[];
+    for(const card of candidates){
+      if(!card?.image)continue;
+      try{
+        const im=await loadImageForCompare(card.image);
+        const cc=document.createElement('canvas'); cc.width=320;cc.height=320*im.height/im.width;
+        cc.getContext('2d').drawImage(im,0,0,cc.width,cc.height);
+        scored.push({card,score:signatureDistance(srcSig,imageSignatureFromCanvas(cc))});
+      }catch(e){}
+    }
+    scored.sort((a,b)=>a.score-b.score);
+    return scored;
+  }catch(e){return []}
+}
+async function tcgSearch(name,number,file){
   try{
     if(number){
-      const parts=number.split("/");
-      const local=parts[0].replace(/^0+/,"")||"0";
-      const printedTotal=parts[1]||"";
-      const res=await fetch("https://api.tcgdex.net/v2/de/cards?localId="+encodeURIComponent(local));
-      if(res.ok){
-        const briefs=await res.json();
-        if(Array.isArray(briefs)){
-          const detailed=[];
-          for(const b of briefs.slice(0,60)){
-            try{
-              const d=await fetch("https://api.tcgdex.net/v2/de/cards/"+encodeURIComponent(b.id));
-              if(!d.ok)continue;
-              const card=await d.json();
-              const sameLocal=String(card.localId).replace(/^0+/,"")===local;
-              const official=String(card.set?.cardCount?.official||"");
-              const total=String(card.set?.cardCount?.total||"");
-
-              // IMPORTANT:
-              // On TCGdex, cardCount.total can include secret/extra cards.
-              // The printed denominator on the physical card usually matches
-              // the set's official count. Example: Reisegefährten is 159+31,
-              // so 137/159 must not be compared to total=190.
-              const samePrintedSet =
-                !printedTotal ||
-                official===printedTotal ||
-                total===printedTotal;
-
-              if(sameLocal && samePrintedSet) detailed.push(card);
-            }catch(e){}
-          }
-          if(detailed.length)return detailed;
+      const parts=number.split('/');
+      const local=parts[0].replace(/^0+/,'')||'0';
+      const printedTotal=parts[1]||'';
+      // IMPORTANT: a localId is not globally unique. First narrow by the
+      // printed denominator (set size), then fetch that exact localId from
+      // each plausible set. Finally compare the actual card image.
+      const sets=await getSetsByPrintedTotal(printedTotal);
+      const candidates=[];
+      for(const set of sets.slice(0,80)){
+        const card=await getCardBySetAndLocal(set.id,local);
+        if(card && String(card.localId).replace(/^0+/,'')===local) candidates.push(card);
+      }
+      if(candidates.length===1)return candidates;
+      if(candidates.length>1 && file){
+        const scored=await compareCardToCandidates(file,candidates);
+        if(scored.length){
+          const best=scored[0];
+          // Require a meaningful visual lead over the runner-up.
+          const second=scored[1]?.score ?? 999;
+          if(best.score<0.18 || best.score+0.035<second) return scored.map(x=>x.card);
         }
       }
+      if(candidates.length)return candidates;
     }
-
-    // Name fallback only when the number lookup produced no result.
     if(!name)return [];
     const res=await fetch("https://api.tcgdex.net/v2/de/cards?name="+encodeURIComponent(name));
     if(!res.ok)return [];
@@ -276,7 +328,7 @@ function applyManualWebResult(i,name,set,number){
 }
 async function retryTcg(i){
   const r=state.rows[i];
-  const cand=await tcgSearch(r.name||r.ocrName,r.number||r.ocrNumber);
+  const cand=await tcgSearch(r.name||r.ocrName,r.number||r.ocrNumber,r.file);
   const best=cand[0];
   if(best){
     r.name=best.name||r.name;
@@ -303,7 +355,7 @@ async function retryNumber(i){
     const nums=numberCandidates(texts);
     if(nums.length){
       r.ocrNumber=nums[0]; r.number=nums[0];
-      const cand=await tcgSearch("",nums[0]); const best=cand[0];
+      const cand=await tcgSearch("",nums[0],r.file); const best=cand[0];
       if(best){ r.name=best.name||r.name; r.set=best.set?.name||r.set; r.match=true; r.webSource="TCGdex"; }
       r.title=buildTitle(r); render(); update();
       alert("Kartennummer erkannt: "+nums[0]+(best?" – Karte + Set bestätigt.":""));
@@ -399,7 +451,7 @@ async function analyze(){
       }catch(e){numberText="";}
       const name=findName(nameTexts,top,full);
       const number=findNumber(numberText);
-      const cand=await tcgSearch(name,number);
+      const cand=await tcgSearch(name,number,file);
       const best=cand[0];
       const localFromOcr=number ? number.split("/")[0].replace(/^0+/ ,"") : "";
       const printedTotalFromOcr=number ? (number.split("/")[1]||"") : "";
