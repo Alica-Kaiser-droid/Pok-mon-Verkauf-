@@ -26,7 +26,7 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 <body>
 <div class="wrap">
 <h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V1.4</span></h1>
-<div class="sub">V1.5 · Sicherheitsprüfung gegen falsche Treffer</div><div class="small" style="margin-top:4px">Build: 2026-08-21-02 · Wenn du diesen Build siehst, ist die neue Datei geladen.<div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und erkannte Kartendaten zusammenpassen.</div></div>
+<div class="sub">V1.6 · Kartennummer → Set → Name</div><div class="small" style="margin-top:4px">Build: 2026-08-21-03 · Wenn du diesen Build siehst, ist die neue Datei geladen.<div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und erkannte Kartendaten zusammenpassen.</div></div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
@@ -130,36 +130,52 @@ async function tcgSearch(name,number){
     if(number){
       const parts=number.split("/");
       const local=parts[0].replace(/^0+/,"")||"0";
-      const total=parts[1]||"";
+      const printedTotal=parts[1]||"";
       const res=await fetch("https://api.tcgdex.net/v2/de/cards?localId="+encodeURIComponent(local));
       if(res.ok){
         const briefs=await res.json();
         if(Array.isArray(briefs)){
           const detailed=[];
-          for(const b of briefs.slice(0,40)){
+          for(const b of briefs.slice(0,60)){
             try{
               const d=await fetch("https://api.tcgdex.net/v2/de/cards/"+encodeURIComponent(b.id));
               if(!d.ok)continue;
               const card=await d.json();
-              if(String(card.localId).replace(/^0+/,"")===local &&
-                 (!total || String(card.set?.cardCount?.total||"")===total)) detailed.push(card);
+              const sameLocal=String(card.localId).replace(/^0+/,"")===local;
+              const official=String(card.set?.cardCount?.official||"");
+              const total=String(card.set?.cardCount?.total||"");
+
+              // IMPORTANT:
+              // On TCGdex, cardCount.total can include secret/extra cards.
+              // The printed denominator on the physical card usually matches
+              // the set's official count. Example: Reisegefährten is 159+31,
+              // so 137/159 must not be compared to total=190.
+              const samePrintedSet =
+                !printedTotal ||
+                official===printedTotal ||
+                total===printedTotal;
+
+              if(sameLocal && samePrintedSet) detailed.push(card);
             }catch(e){}
           }
           if(detailed.length)return detailed;
         }
       }
     }
+
+    // Name fallback only when the number lookup produced no result.
     if(!name)return [];
     const res=await fetch("https://api.tcgdex.net/v2/de/cards?name="+encodeURIComponent(name));
     if(!res.ok)return [];
-    const arr=await res.json();return Array.isArray(arr)?arr.slice(0,12):[];
+    const arr=await res.json();
+    return Array.isArray(arr)?arr.slice(0,12):[];
   }catch(e){return []}
 }
 function render(){
   $("results").innerHTML=state.rows.map((r,i)=>{
     const title="Pokémon "+[r.name,r.number,r.set,r.language].filter(Boolean).join(" ");
     return `<div class="item">
-      <div class="row"><img class="preview" src="${r.url}"><div><h3>Karte ${i+1}</h3><span class="badge ${r.match?"ok":"warn"}">${r.match?"Nummer + Set bestätigt":"Prüfen"}</span><div class="small">Name-OCR: ${esc(r.ocrName||"–")} · Nummer-OCR: ${esc(r.ocrNumber||"–")}</div></div></div>
+      <div class="row"><img class="preview" src="${r.url}"><div><h3>Karte ${i+1}</h3><span class="badge ${r.match?"ok":"warn"}">${r.match?"🟢 Nummer + Set bestätigt":"🟡 Prüfen"}</span><div class="small">Name-OCR: ${esc(r.ocrName||"–")} · Nummer-OCR: ${esc(r.ocrNumber||"–")}</div></div></div>
       <label><span>Name</span><input data-i="${i}" data-k="name" value="${esc(r.name)}"></label>
       <label><span>Set</span><input data-i="${i}" data-k="set" value="${esc(r.set)}"></label>
       <div class="grid">
@@ -219,14 +235,20 @@ async function analyze(){
     const cand=await tcgSearch(name,number);
     const best=cand[0];
 
-    const exact=best&&number&&
-      String(best.localId).replace(/^0+/,"")==number.split("/")[0].replace(/^0+/,"") &&
-      (!number.split("/")[1] || String(best.set?.cardCount?.total||"")==number.split("/")[1]);
+    const localFromOcr=number ? number.split("/")[0].replace(/^0+/,"") : "";
+    const printedTotalFromOcr=number ? (number.split("/")[1]||"") : "";
+    const exact=!!best && !!number &&
+      String(best.localId).replace(/^0+/,"")===localFromOcr &&
+      (!printedTotalFromOcr ||
+       String(best.set?.cardCount?.official||"")===printedTotalFromOcr ||
+       String(best.set?.cardCount?.total||"")===printedTotalFromOcr);
 
     const set=best?.set?.name||"";
-    const cardNumber=best?.localId
-      ? best.localId+"/"+(best.set?.cardCount?.total||number.split("/")[1]||"")
-      : number;
+    // Keep the number exactly as printed, e.g. 137/159, even if TCGdex
+    // reports extra cards in its total count.
+    const cardNumber=best?.localId && printedTotalFromOcr
+      ? String(best.localId).padStart(String(number).split("/")[0].length,"0")+"/"+printedTotalFromOcr
+      : (best?.localId ? String(best.localId) : number);
 
     const finalName=best?.name||name;
     const lang="Deutsch";
