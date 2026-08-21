@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Pokémon → eBay Scanner V1.9</title>
+<title>Pokémon → eBay Scanner V2.0</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f5f7fb}
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
@@ -17,7 +17,7 @@ input,select{width:100%;border:1px solid #d0d5dd;border-radius:10px;padding:10px
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>*{flex:1}.small{font-size:13px;color:#667085}.status{margin-top:8px;font-size:13px}
 .item{border:1px solid #e4e7ec;border-radius:14px;padding:12px;margin-top:10px;background:#fff}.item h3{font-size:16px;margin:0 0 4px}
 .badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2f6;font-size:12px;margin:4px 4px 4px 0}.ok{background:#e8f7ee}.warn{background:#fff4df}
-.preview{width:90px;height:120px;object-fit:cover;border-radius:8px;background:#eee}.hidden{display:none}
+.preview{width:90px;height:120px;object-fit:cover;border-radius:8px;background:#eee}.webtools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}.webtools button{font-size:13px;padding:9px}.confidence{font-size:12px;color:#475467;margin-top:6px}.hidden{display:none}
 label{display:block;font-size:13px;font-weight:600;margin-top:8px}label span{display:block;margin-bottom:5px}
 details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f8fa;border-radius:8px;padding:8px}
 @media(max-width:520px){.grid{grid-template-columns:1fr}.row{display:grid;grid-template-columns:1fr 1fr}.row button{width:100%}}
@@ -25,8 +25,8 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 </head>
 <body>
 <div class="wrap">
-<h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V1.9</span></h1>
-<div class="sub">V1.9 · Batch-Scan bis 50 Fotos · Mehrfachauswahl auf dem iPhone · Nummer + Set zuerst</div><div class="small" style="margin-top:4px">Build: 2026-08-21-09 · Bis zu 50 Fotos pro Durchlauf, mit Fortschritt und Einzelprüfung.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen.</div>
+<h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V2.0</span></h1>
+<div class="sub">V2.0 · Batch-Scan bis 50 Fotos · Mehrfachauswahl auf dem iPhone · Nummer + Set zuerst</div><div class="small" style="margin-top:4px">Build: 2026-08-21-10 · Bis zu 50 Fotos pro Durchlauf, mit Fortschritt und Einzelprüfung.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen. Bei unsicheren Treffern kannst du Google und eBay direkt aus der Karte öffnen.</div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
@@ -205,11 +205,57 @@ function buildDescription(r){
   ].filter(Boolean);
   return parts.join(". ")+".";
 }
+function webQuery(r){
+  const bits=[r.number,r.name,r.set].filter(Boolean);
+  if(!bits.length && r.ocrName) bits.push(r.ocrName);
+  return `Pokemon ${bits.join(" ")}`.trim();
+}
+function googleConfirm(r){
+  const q=webQuery(r);
+  window.open("https://www.google.com/search?q="+encodeURIComponent(q+" Pokemon Karte"),"_blank");
+}
+function ebaySearch(r){
+  const q=webQuery(r);
+  window.open("https://www.ebay.de/sch/i.html?_nkw="+encodeURIComponent(q+" Pokemon Karte"),"_blank");
+}
+function applyManualWebResult(i,name,set,number){
+  const r=state.rows[i];
+  if(name!==undefined) r.name=name;
+  if(set!==undefined) r.set=set;
+  if(number!==undefined) r.number=number;
+  r.match=!!(r.number && r.set);
+  r.title=buildTitle(r);
+  render();update();
+}
+async function retryTcg(i){
+  const r=state.rows[i];
+  const cand=await tcgSearch(r.name||r.ocrName,r.number||r.ocrNumber);
+  const best=cand[0];
+  if(best){
+    r.name=best.name||r.name;
+    r.set=best.set?.name||r.set;
+    if(best.localId && r.number){
+      const total=r.number.includes('/')?r.number.split('/')[1]:'';
+      r.number=String(best.localId).padStart(3,'0')+(total?'/'+total:'');
+    }
+    r.match=true;r.webSource='TCGdex';r.title=buildTitle(r);
+    render();update();
+    alert('TCGdex-Treffer gefunden und übernommen.');
+  }else{
+    alert('Kein eindeutiger TCGdex-Treffer. Bitte Google bestätigen.');
+  }
+}
 function render(){
   $("results").innerHTML=state.rows.map((r,i)=>{
     const title=buildTitle(r);
     return `<div class="item">
-      <div class="row"><img class="preview" src="${r.url}"><div><h3>Karte ${i+1}</h3><span class="badge ${r.match?"ok":"warn"}">${r.match?"🟢 Nummer + Set bestätigt":"🟡 Prüfen"}</span><div class="small">Name-OCR: ${esc(r.ocrName||"–")} · Nummer-OCR: ${esc(r.ocrNumber||"–")}</div></div></div>
+      <div class="row"><img class="preview" src="${r.url}"><div><h3>Karte ${i+1}</h3><span class="badge ${r.match?"ok":"warn"}">${r.match?"🟢 Nummer + Set bestätigt":"🟡 Prüfen"}</span><div class="small">Name-OCR: ${esc(r.ocrName||"–")} · Nummer-OCR: ${esc(r.ocrNumber||"–")}</div><div class="confidence">Suchbegriff: <b>${esc(webQuery(r)||"–")}</b></div></div></div>
+      <div class="webtools">
+        <button type="button" class="secondary" data-web-google="${i}">🔎 Google bestätigen</button>
+        <button type="button" class="secondary" data-web-ebay="${i}">🛒 eBay prüfen</button>
+        <button type="button" class="secondary" data-web-tcg="${i}">↻ TCGdex erneut</button>
+        <button type="button" class="secondary" data-web-help="${i}">ℹ️ Was prüfen?</button>
+      </div>
       <label><span>Name</span><input data-i="${i}" data-k="name" value="${esc(r.name)}"></label>
       <label><span>Set</span><input data-i="${i}" data-k="set" value="${esc(r.set)}"></label>
       <div class="grid">
@@ -221,11 +267,15 @@ function render(){
         <label><span>Variante</span><select data-i="${i}" data-k="variant">${["","Normal","Holo","Reverse Holo","Promo","Unsicher"].map(x=>`<option value="${esc(x)}" ${x==r.variant?"selected":""}>${x||"Bitte wählen"}</option>`).join("")}</select></label>
       </div>
       <label><span>eBay-Titel (automatisch)</span><input data-i="${i}" data-k="title" value="${esc(r.title||title)}"></label>
-      <div class="small" style="margin-top:6px">Der eBay-Titel wird sofort angepasst, sobald Name, Nummer, Set, Sprache, Variante <b>oder Zustand</b> geändert wird. Zustand wird zusätzlich in die CSV übernommen.</div>
+      <div class="small" style="margin-top:6px">Der eBay-Titel wird sofort angepasst, sobald Name, Nummer, Set, Sprache, Variante <b>oder Zustand</b> geändert wird. Zustand wird zusätzlich in die CSV übernommen. Nach der Web-Bestätigung kannst du die Felder direkt korrigieren.</div>
       <label><span>Preis (€)</span><input data-i="${i}" data-k="price" type="number" step="0.01" value="${esc(r.price)}"></label>
       <details><summary>Erkannter OCR-Text</summary><div class="ocr">${esc(r.ocr)}</div></details>
     </div>`;
   }).join("");
+  $("results").querySelectorAll("[data-web-google]").forEach(el=>el.onclick=()=>googleConfirm(state.rows[+el.dataset.webGoogle]));
+  $("results").querySelectorAll("[data-web-ebay]").forEach(el=>el.onclick=()=>ebaySearch(state.rows[+el.dataset.webEbay]));
+  $("results").querySelectorAll("[data-web-tcg]").forEach(el=>el.onclick=()=>retryTcg(+el.dataset.webTcg));
+  $("results").querySelectorAll("[data-web-help]").forEach(el=>el.onclick=()=>alert("Prüfe bei Google vor allem: Kartennummer, Kartenname und Set. Bei eBay kannst du danach nach ähnlichen Angeboten suchen und die übliche Titel-Reihenfolge übernehmen. Die App übernimmt Web-Ergebnisse nicht blind, damit falsche Karten nicht automatisch gelistet werden."));
   $("results").querySelectorAll("[data-i]").forEach(el=>el.oninput=e=>{
     const r=state.rows[+e.target.dataset.i];
     const k=e.target.dataset.k;
@@ -305,8 +355,8 @@ $("analyze").onclick=analyze;update();
 <script>
 /* V1.5 safety layer: never silently trust a weak OCR number/name combination. */
 window.POKEMON_SCANNER_V18 = {
-  version: "1.8",
-  build: "2026-08-21-08",
+  version: "2.0",
+  build: "2026-08-21-10",
   normalizeNumber: function(v) {
     if (!v) return "";
     return String(v).trim().replace(/\s+/g, "").replace(/[Oo]/g, "0");
