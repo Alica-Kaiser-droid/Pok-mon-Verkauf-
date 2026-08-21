@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Pokémon → eBay Scanner V1.8</title>
+<title>Pokémon → eBay Scanner V1.9</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f5f7fb}
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
@@ -25,17 +25,22 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 </head>
 <body>
 <div class="wrap">
-<h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V1.8</span></h1>
-<div class="sub">V1.8 · Batch-Scan bis 50 Fotos · Nummer + Set zuerst · eBay-Titel, Variante und Zustand automatisch</div><div class="small" style="margin-top:4px">Build: 2026-08-21-08 · Batch-Verarbeitung mit Fortschritt und Einzelprüfung.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen.</div>
+<h1>Pokémon → eBay Scanner <span style="font-size:12px;color:#667085;font-weight:600">V1.9</span></h1>
+<div class="sub">V1.9 · Batch-Scan bis 50 Fotos · Mehrfachauswahl auf dem iPhone · Nummer + Set zuerst</div><div class="small" style="margin-top:4px">Build: 2026-08-21-09 · Bis zu 50 Fotos pro Durchlauf, mit Fortschritt und Einzelprüfung.</div><div class="small" style="margin-top:4px">Automatische Treffer werden nur übernommen, wenn Kartennummer und Set zusammenpassen.</div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
 </div>
 
 <div class="card">
-<label><span>Fotos aufnehmen</span><input id="camera" type="file" accept="image/*" capture="environment" multiple></label>
-<label><span>Fotos auswählen</span><input id="files" type="file" accept="image/*" multiple></label>
-<div class="status" id="status">Noch keine Fotos.</div>
+<div class="small" style="margin-bottom:8px">Mehrere Fotos auf einmal auswählen</div>
+<div class="row">
+<button id="pickPhotos">📷 Fotos aus Mediathek wählen</button>
+<button id="takePhoto" class="secondary">Kamera: 1 Foto hinzufügen</button>
+</div>
+<input id="files" type="file" accept="image/*" multiple style="display:none">
+<input id="camera" type="file" accept="image/*" capture="environment" style="display:none">
+<div class="status" id="status">Noch keine Fotos. Du kannst bis zu 50 Bilder gleichzeitig auswählen.</div>
 <div id="progressWrap" class="hidden" style="margin-top:10px">
   <div class="row" style="justify-content:space-between"><span class="small" id="progressText">0 / 0</span><span class="small" id="progressPercent">0%</span></div>
   <progress id="progress" value="0" max="100" style="width:100%;height:12px"></progress>
@@ -45,7 +50,7 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 <button id="cancel" class="secondary" disabled>Stoppen</button>
 <button id="clear" class="secondary">Leeren</button>
 </div>
-<div class="small" style="margin-top:8px">Tipp: Wähle auf dem iPhone direkt 10, 20 oder 50 Fotos. Die App nimmt maximal 50 pro Durchlauf.</div>
+<div class="small" style="margin-top:8px">Tipp: Bei „Fotos aus Mediathek wählen“ kannst du auf dem iPhone mehrere Bilder markieren (z. B. 10, 20 oder 50). Die App nimmt maximal 50 pro Durchlauf. „Kamera“ fügt einzelne Aufnahmen hinzu.</div>
 </div>
 
 <div class="card">
@@ -72,7 +77,7 @@ function addFiles(fs){
   $("status").textContent=state.files.length>=50?"50 Fotos bereit (Maximum pro Durchlauf).":`${state.files.length} Fotos bereit.`;
   update();
 }
-$("camera").onchange=e=>{addFiles(e.target.files);e.target.value=""};$("files").onchange=e=>{addFiles(e.target.files);e.target.value=""};
+$("pickPhotos").onclick=()=>$("files").click();$("takePhoto").onclick=()=>$("camera").click();$("camera").onchange=e=>{addFiles(e.target.files);e.target.value=""};$("files").onchange=e=>{addFiles(e.target.files);e.target.value=""};
 $("clear").onclick=()=>{if(state.running)return;state.files=[];state.rows=[];$("results").innerHTML="";$("progressWrap").classList.add("hidden");$("status").textContent="Geleert.";update();};
 $("cancel").onclick=()=>{if(state.running){state.cancel=true;$("status").textContent="Stoppen nach der aktuellen Karte …";}};
 
