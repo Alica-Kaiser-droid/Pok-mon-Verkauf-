@@ -26,7 +26,7 @@ details{margin-top:10px}.ocr{white-space:pre-wrap;font-size:12px;background:#f7f
 <body>
 <div class="wrap">
 <h1>Pokémon → eBay Scanner</h1>
-<div class="sub">V1.1: mehrere OCR-Pässe, gezielte Namens-/Nummernerkennung und TCGdex-Abgleich.</div>
+<div class="sub">V1.3: Nummern-Scan in mehreren Varianten + Nummer-first-Abgleich mit TCGdex.</div>
 <div class="grid">
 <div class="stat"><span class="small">Fotos</span><b id="nPhotos">0</b></div>
 <div class="stat"><span class="small">Treffer</span><b id="nFound">0</b></div>
@@ -62,33 +62,38 @@ function addFiles(fs){state.files.push(...Array.from(fs));state.files=state.file
 $("camera").onchange=e=>addFiles(e.target.files);$("files").onchange=e=>addFiles(e.target.files);
 $("clear").onclick=()=>{state.files=[];state.rows=[];$("results").innerHTML="";$("status").textContent="Geleert.";update();};
 
-function preprocess(file, kind){
+function preprocess(file, kind, variant="normal"){
   return new Promise((resolve,reject)=>{
     const im=new Image();
     im.onload=()=>{
       const c=document.createElement("canvas"),ctx=c.getContext("2d");
-      const W=1800, ratio=im.height/im.width, H=Math.round(W*ratio);
+      const W=2400, ratio=im.height/im.width, H=Math.round(W*ratio);
       c.width=W;c.height=H;
       ctx.drawImage(im,0,0,W,H);
-      const crop=(y0,y1)=>{
-        const cc=document.createElement("canvas"),cw=W,ch=Math.max(1,Math.round(H*(y1-y0)));
-        cc.width=cw;cc.height=ch;const xctx=cc.getContext("2d");
-        xctx.drawImage(c,0,Math.round(H*y0),W,ch,0,0,W,ch);
-        const d=xctx.getImageData(0,0,cw,ch),p=d.data;
-        for(let i=0;i<p.length;i+=4){
-          let v=.299*p[i]+.587*p[i+1]+.114*p[i+2];
-          v=(v-128)*1.45+128;
-          v=Math.max(0,Math.min(255,v));
-          p[i]=p[i+1]=p[i+2]=v;
-        }
-        xctx.putImageData(d,0,0);
-        return cc;
-      };
-      if(kind==="top") resolve(crop(0,.22));
-      else if(kind==="bottom") resolve(crop(.82,1));
-      else resolve(c);
+
+      let y0=0,y1=1,x0=0,x1=1;
+      if(kind==="top"){y0=.015;y1=.18;x0=.05;x1=.95;}
+      if(kind==="number"){y0=.86;y1=.995;x0=.02;x1=.78;}
+      if(kind==="full"){y0=0;y1=1;x0=0;x1=1;}
+
+      const cw=Math.round(W*(x1-x0)), ch=Math.round(H*(y1-y0));
+      const cc=document.createElement("canvas"); cc.width=cw; cc.height=ch;
+      const xctx=cc.getContext("2d");
+      xctx.imageSmoothingEnabled=true;
+      xctx.drawImage(c,Math.round(W*x0),Math.round(H*y0),cw,ch,0,0,cw,ch);
+
+      const d=xctx.getImageData(0,0,cw,ch),p=d.data;
+      for(let i=0;i<p.length;i+=4){
+        let v=.299*p[i]+.587*p[i+1]+.114*p[i+2];
+        if(variant==="high") v=(v-128)*2.0+128;
+        else if(variant==="soft") v=(v-128)*1.25+128;
+        v=Math.max(0,Math.min(255,v));
+        p[i]=p[i+1]=p[i+2]=v;
+      }
+      xctx.putImageData(d,0,0);
+      resolve(cc);
     };
-    im.onerror=reject;im.src=URL.createObjectURL(file);
+    im.onerror=reject; im.src=URL.createObjectURL(file);
   });
 }
 
@@ -190,27 +195,55 @@ async function analyze(){
   $("status").textContent="OCR-Engine wird geladen …";
   const worker=await Tesseract.createWorker("deu+eng");
   for(let i=0;i<state.files.length;i++){
-    const file=state.files[i];$("status").textContent=`Analysiere ${i+1}/${state.files.length} …`;
-    let top="",bottom="",full="";
+    const file=state.files[i];
+    $("status").textContent=`Analysiere ${i+1}/${state.files.length} …`;
+
+    let top="",numberText="",full="";
     try{
-      const [a,b,c]=await Promise.all([preprocess(file,"top"),preprocess(file,"bottom"),preprocess(file,"full")]);
-      top=await ocrPass(worker,a,7); bottom=await ocrPass(worker,b,6); full=await ocrPass(worker,c,6);
+      const topImg=await preprocess(file,"top","normal");
+      const n1=await preprocess(file,"number","normal");
+      const n2=await preprocess(file,"number","high");
+      const n3=await preprocess(file,"number","soft");
+      const fullImg=await preprocess(file,"full","normal");
+
+      top=await ocrPass(worker,topImg,7);
+      const a=await ocrPass(worker,n1,6);
+      const b=await ocrPass(worker,n2,7);
+      const c=await ocrPass(worker,n3,6);
+      full=await ocrPass(worker,fullImg,6);
+      numberText=[a,b,c,full].join("\n");
     }catch(e){}
-    const name=findName(top,full),number=findNumber(bottom+"\\n"+full);
-    const cand=await tcgSearch(name,number),best=cand[0];
-    const exact=best&&number&&String(best.localId).replace(/^0+/,"")==number.split("/")[0].replace(/^0+/,"") && (!number.split("/")[1] || String(best.set?.cardCount?.total||"")==number.split("/")[1]);
+
+    const name=findName(top,full);
+    const number=findNumber(numberText);
+    const cand=await tcgSearch(name,number);
+    const best=cand[0];
+
+    const exact=best&&number&&
+      String(best.localId).replace(/^0+/,"")==number.split("/")[0].replace(/^0+/,"") &&
+      (!number.split("/")[1] || String(best.set?.cardCount?.total||"")==number.split("/")[1]);
+
     const set=best?.set?.name||"";
-    const cardNumber=best?.localId?best.localId+"/"+(best.set?.cardCount?.total||number.split("/")[1]||""):number;
+    const cardNumber=best?.localId
+      ? best.localId+"/"+(best.set?.cardCount?.total||number.split("/")[1]||"")
+      : number;
+
     const finalName=best?.name||name;
     const lang="Deutsch";
-    state.rows.push({sku:"PKM-"+Date.now().toString(36).toUpperCase()+"-"+String(i+1).padStart(3,"0"),file,url:URL.createObjectURL(file),
-      ocrName:name,ocrNumber:number,ocr:top+"\\n--- BOTTOM ---\\n"+bottom+"\\n--- FULL ---\\n"+full,
+
+    state.rows.push({
+      sku:"PKM-"+Date.now().toString(36).toUpperCase()+"-"+String(i+1).padStart(3,"0"),
+      file,url:URL.createObjectURL(file),
+      ocrName:name,ocrNumber:number,ocr:numberText+"\n--- NAME ---\n"+top,
       name:finalName,set,number:cardNumber,language:lang,condition:"",variant:"",price:"",
-      title:"Pokémon "+[finalName,cardNumber,set,lang].filter(Boolean).join(" "),match:!!best&&!!(exact||name)
+      title:"Pokémon "+[finalName,cardNumber,set,lang].filter(Boolean).join(" "),
+      match:!!best&&!!exact
     });
     render();update();
   }
-  await worker.terminate();$("status").textContent=`Fertig: ${state.files.length} Fotos analysiert.`;$("analyze").disabled=false;
+  await worker.terminate();
+  $("status").textContent=`Fertig: ${state.files.length} Fotos analysiert.`;
+  $("analyze").disabled=false;
 }
 $("analyze").onclick=analyze;update();
 </script>
